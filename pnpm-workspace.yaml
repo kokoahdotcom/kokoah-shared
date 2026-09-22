@@ -1,0 +1,18 @@
+# pnpm settings (pnpm 10.34.5). Every key below is documented at https://pnpm.io/settings (10.x).
+# This file holds settings only; the repo is a single package, not a workspace.
+
+# Supply-chain hardening
+# Do not install any version published less than 1 day (1440 minutes) ago, including transitive deps. (v10.16.0+)
+minimumReleaseAge: 1440
+# Fail if a package's trust evidence (trusted publisher / provenance) decreased versus earlier releases. (v10.21.0+)
+trustPolicy: no-downgrade
+# Only direct dependencies may come from git or tarball URLs. (v10.26.0+)
+blockExoticSubdeps: true
+# Dependency lifecycle scripts are blocked by default in pnpm 10; make an unreviewed build script an install error. (v10.3.0+)
+strictDepBuilds: true
+# If a dependency ever needs its install script, review it and allow-list it explicitly (v10.26.0+), e.g.:
+# allowBuilds:
+#   some-package@1.2.3: true
+
+# Save exact versions (no ^ range) when adding dependencies.
+savePrefix: ''

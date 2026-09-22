@@ -1,0 +1,219 @@
+import { generatePrivateKey, privateKeyToAccount, sign } from "viem/accounts";
+import { describe, expect, it } from "vitest";
+import { MainnetWriteBlockedError, getNetworkConfig, MAINNET, TESTNET } from "../src/network/index.js";
+import {
+  buildApproveAgent,
+  buildApproveBuilderFee,
+  buildExchangeRequest,
+  buildRevokeAgent,
+  buildWithdraw,
+  expiresAfterFromNow,
+  formatAgentName,
+  hashL1Action,
+  isNonceInWindow,
+  l1SigningDigest,
+  l1TypedData,
+  MAX_AGENT_VALIDITY_MS,
+  MonotonicNonceManager,
+  parseAgentName,
+  prepareL1Request,
+  recoverL1Signer,
+  recoverUserSignedSigner,
+  signatureFromHex,
+  signatureToHex,
+  signL1Action,
+  userSignedDigest,
+} from "../src/signing/index.js";
+
+const NOW = 1_790_000_000_000;
+const DAY = 86_400_000;
+
+describe("approveAgent typed data (main wallet signs in the browser)", () => {
+  const agent = privateKeyToAccount(generatePrivateKey());
+
+  it("builds a named agent with valid_until and matching action/typed data", async () => {
+    const p = buildApproveAgent({ agentAddress: agent.address, agentName: "kokoah-web", validUntil: NOW + 30 * DAY, nonce: NOW, network: MAINNET });
+    expect(p.action).toEqual({
+      type: "approveAgent",
+      signatureChainId: "0xa4b1",
+      hyperliquidChain: "Mainnet",
+      agentAddress: agent.address.toLowerCase(),
+      agentName: `kokoah-web valid_until ${NOW + 30 * DAY}`,
+      nonce: NOW,
+    });
+    expect(Object.keys(p.action)).toEqual(["type", "signatureChainId", "hyperliquidChain", "agentAddress", "agentName", "nonce"]);
+    expect(p.typedData.domain).toEqual({ name: "HyperliquidSignTransaction", version: "1", chainId: 42161, verifyingContract: "0x0000000000000000000000000000000000000000" });
+    expect(p.typedData.primaryType).toBe("HyperliquidTransaction:ApproveAgent");
+    expect(p.typedData.types["HyperliquidTransaction:ApproveAgent"]!.map((f) => f.name)).toEqual(["hyperliquidChain", "agentAddress", "agentName", "nonce"]);
+    expect(p.typedData.message).toEqual({ hyperliquidChain: "Mainnet", agentAddress: agent.address.toLowerCase(), agentName: `kokoah-web valid_until ${NOW + 30 * DAY}`, nonce: NOW });
+    expect(p.nonce).toBe(NOW);
+    // A main wallet signs it; the signer is recoverable.
+    const main = privateKeyToAccount(generatePrivateKey());
+    const sig = signatureFromHex(await main.signTypedData(p.typedData as Parameters<typeof main.signTypedData>[0]));
+    expect((await recoverUserSignedSigner({ typedData: p.typedData, signature: sig })).toLowerCase()).toBe(main.address.toLowerCase());
+    expect(userSignedDigest(p.typedData)).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+
+  it("uses the testnet chain and a caller-provided signatureChainId", () => {
+    const p = buildApproveAgent({ agentAddress: agent.address, agentName: "kokoah-pwa", validUntil: NOW + DAY, nonce: NOW, network: TESTNET, signatureChainId: "0x1" });
+    expect(p.action).toMatchObject({ hyperliquidChain: "Testnet", signatureChainId: "0x1" });
+    expect(p.typedData.domain.chainId).toBe(1);
+  });
+
+  it("enforces the 180-day cap, a future expiry and the 16-character name limit", () => {
+    const base = { agentAddress: agent.address, nonce: NOW, network: TESTNET } as const;
+    expect(() => buildApproveAgent({ ...base, agentName: "kokoah-web", validUntil: NOW + MAX_AGENT_VALIDITY_MS })).not.toThrow();
+    expect(() => buildApproveAgent({ ...base, agentName: "kokoah-web", validUntil: NOW + MAX_AGENT_VALIDITY_MS + 1 })).toThrow(RangeError);
+    expect(() => buildApproveAgent({ ...base, agentName: "kokoah-web", validUntil: NOW })).toThrow(RangeError);
+    expect(() => buildApproveAgent({ ...base, agentName: "x".repeat(17), validUntil: NOW + DAY })).toThrow(RangeError);
+    expect(() => buildApproveAgent({ ...base, agentName: "", validUntil: NOW + DAY })).toThrow(RangeError);
+    expect(() => buildApproveAgent({ ...base, agentName: "a valid_until 1", validUntil: NOW + DAY })).toThrow(RangeError);
+    expect(() => buildApproveAgent({ ...base, agentAddress: "0x12", agentName: "k", validUntil: NOW + DAY })).toThrow(RangeError);
+  });
+
+  it("formats and parses agent names", () => {
+    expect(formatAgentName("kokoah-web", 123)).toBe("kokoah-web valid_until 123");
+    expect(formatAgentName("kokoah-web")).toBe("kokoah-web");
+    expect(parseAgentName("kokoah-web valid_until 123")).toEqual({ name: "kokoah-web", validUntil: 123 });
+    expect(parseAgentName("Mobile QR")).toEqual({ name: "Mobile QR" });
+  });
+
+  it("builds a revoke (same name, zero address)", () => {
+    const p = buildRevokeAgent({ agentName: "kokoah-web", nonce: NOW, network: TESTNET });
+    expect(p.action).toMatchObject({ agentAddress: "0x0000000000000000000000000000000000000000", agentName: "kokoah-web" });
+  });
+});
+
+describe("approveBuilderFee and withdraw typed data", () => {
+  const builder = "0x1111111111111111111111111111111111111111" as const;
+  it("formats maxFeeRate from tenths of a bp and caps it at 0.1%", () => {
+    const p = buildApproveBuilderFee({ builder, maxFeeTenthsBps: 100, nonce: NOW, network: MAINNET });
+    expect(p.action).toEqual({ type: "approveBuilderFee", signatureChainId: "0xa4b1", hyperliquidChain: "Mainnet", maxFeeRate: "0.1%", builder, nonce: NOW });
+    expect(p.typedData.primaryType).toBe("HyperliquidTransaction:ApproveBuilderFee");
+    expect(buildApproveBuilderFee({ builder, maxFeeTenthsBps: 25, nonce: NOW, network: TESTNET }).action.maxFeeRate).toBe("0.025%");
+    expect(buildApproveBuilderFee({ builder, maxFeeTenthsBps: 0, nonce: NOW, network: TESTNET }).action.maxFeeRate).toBe("0%");
+    expect(() => buildApproveBuilderFee({ builder, maxFeeTenthsBps: 101, nonce: NOW, network: TESTNET })).toThrow(RangeError);
+    expect(() => buildApproveBuilderFee({ builder, maxFeeTenthsBps: 2.5, nonce: NOW, network: TESTNET })).toThrow(RangeError);
+  });
+  it("withdraw3 uses time = nonce and a normalized amount", () => {
+    const p = buildWithdraw({ destination: builder, amount: "12.50", nonce: NOW, network: TESTNET });
+    expect(p.action).toMatchObject({ type: "withdraw3", amount: "12.5", time: NOW, hyperliquidChain: "Testnet" });
+    expect(p.typedData.primaryType).toBe("HyperliquidTransaction:Withdraw");
+  });
+});
+
+describe("L1 signing helpers", () => {
+  const wallet = privateKeyToAccount(generatePrivateKey());
+  const action = { type: "cancel", cancels: [{ a: 0, o: 1 }] };
+
+  it("the digest path (KMS-style raw signing) equals the SDK signature", async () => {
+    const params = { action, nonce: NOW, network: TESTNET, expiresAfter: NOW + 15_000 };
+    const viaSdk = await signL1Action({ ...params, wallet });
+    const pk = generatePrivateKey();
+    const acct = privateKeyToAccount(pk);
+    const s1 = await signL1Action({ ...params, wallet: acct });
+    const s2 = await sign({ hash: l1SigningDigest(params), privateKey: pk });
+    expect(BigInt(s1.r)).toBe(BigInt(s2.r));
+    expect(BigInt(s1.s)).toBe(BigInt(s2.s));
+    expect(s1.v).toBe(Number(s2.v));
+    expect((await recoverL1Signer({ ...params, signature: viaSdk })).toLowerCase()).toBe(wallet.address.toLowerCase());
+    expect(l1TypedData(params).message.source).toBe("b");
+    expect(l1TypedData({ ...params, network: MAINNET }).message.source).toBe("a");
+  });
+
+  it("vault address and expiresAfter change the hash; vault case does not", () => {
+    const h0 = hashL1Action({ action, nonce: NOW });
+    const h1 = hashL1Action({ action, nonce: NOW, vaultAddress: "0x2222222222222222222222222222222222222222" });
+    const h2 = hashL1Action({ action, nonce: NOW, vaultAddress: "0x2222222222222222222222222222222222222222", expiresAfter: NOW + 1 });
+    expect(new Set([h0, h1, h2]).size).toBe(3);
+    expect(hashL1Action({ action, nonce: NOW, vaultAddress: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" })).toBe(
+      hashL1Action({ action, nonce: NOW, vaultAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+    );
+    // Key order matters for msgpack.
+    expect(hashL1Action({ action: { cancels: [{ a: 0, o: 1 }], type: "cancel" }, nonce: NOW })).not.toBe(h0);
+  });
+
+  it("round-trips hex signatures", () => {
+    const sig = { r: `0x${"1".repeat(64)}`, s: `0x${"2".repeat(64)}`, v: 28 } as const;
+    const hex = signatureToHex(sig);
+    expect(hex).toHaveLength(132);
+    expect(signatureFromHex(hex)).toEqual(sig);
+    expect(signatureFromHex(`0x${"1".repeat(64)}${"2".repeat(64)}00`).v).toBe(27);
+    expect(() => signatureFromHex("0x12")).toThrow(RangeError);
+    expect(() => signatureFromHex(`0x${"1".repeat(128)}05`)).toThrow(RangeError);
+  });
+});
+
+describe("nonces", () => {
+  it("issues max(now, last + 1) per key", () => {
+    let t = 1000;
+    const m = new MonotonicNonceManager({ now: () => t });
+    expect(m.next()).toBe(1000);
+    expect(m.next()).toBe(1001); // same millisecond
+    expect(m.next()).toBe(1002);
+    t = 999; // clock goes backwards
+    expect(m.next()).toBe(1003);
+    t = 5000;
+    expect(m.next()).toBe(5000);
+    expect(m.next("0xAgent")).toBe(5000); // separate key
+    expect(m.next("0xagent")).toBe(5001); // keys are case-insensitive
+    m.observe(9000, "0xagent");
+    expect(m.next("0xAGENT")).toBe(9001);
+    m.observe(10, "0xagent"); // never goes down
+    expect(m.peek("0xagent")).toBe(9001);
+    expect(() => m.observe(5000 + 86_400_000)).toThrow(RangeError); // beyond HL's window: would stall signing
+    m.setClockOffset(10_000);
+    expect(m.next("fresh")).toBe(15_000);
+    expect(() => m.observe(-1)).toThrow(RangeError);
+  });
+
+  it("is strictly increasing under a burst", () => {
+    const m = new MonotonicNonceManager({ now: () => 42 });
+    const seen = Array.from({ length: 1000 }, () => m.next());
+    for (let i = 1; i < seen.length; i++) expect(seen[i]!).toBe(seen[i - 1]! + 1);
+  });
+
+  it("checks HL's accepted window", () => {
+    expect(isNonceInWindow(NOW, NOW)).toBe(true);
+    expect(isNonceInWindow(NOW - 2 * DAY - 1, NOW)).toBe(false);
+    expect(isNonceInWindow(NOW + DAY + 1, NOW)).toBe(false);
+  });
+});
+
+describe("/exchange request assembly and the mainnet guard", () => {
+  const wallet = privateKeyToAccount(generatePrivateKey());
+  const sig = { r: `0x${"1".repeat(64)}`, s: `0x${"2".repeat(64)}`, v: 27 } as const;
+
+  it("refuses mainnet unless explicitly allowed", async () => {
+    expect(() => buildExchangeRequest({ network: MAINNET, action: { type: "noop" }, nonce: NOW, signature: sig })).toThrow(MainnetWriteBlockedError);
+    await expect(prepareL1Request({ wallet, network: MAINNET, compiled: { action: { type: "noop" } }, nonce: NOW })).rejects.toThrow(MainnetWriteBlockedError);
+    const allowed = getNetworkConfig("mainnet", { allowMainnetWrites: true });
+    expect(buildExchangeRequest({ network: allowed, action: { type: "noop" }, nonce: NOW, signature: sig })).toEqual({ action: { type: "noop" }, nonce: NOW, signature: sig });
+  });
+
+  it("builds a testnet body with vault and expiresAfter", async () => {
+    const vault = "0x2222222222222222222222222222222222222222" as const;
+    const body = await prepareL1Request({ wallet, network: TESTNET, compiled: { action: { type: "noop" }, vaultAddress: vault }, nonce: NOW, expiresAfter: NOW + 10_000 });
+    expect(body).toMatchObject({ action: { type: "noop" }, nonce: NOW, vaultAddress: vault, expiresAfter: NOW + 10_000 });
+    const signer = await recoverL1Signer({ action: body.action, nonce: NOW, vaultAddress: vault, expiresAfter: NOW + 10_000, network: TESTNET, signature: body.signature });
+    expect(signer.toLowerCase()).toBe(wallet.address.toLowerCase());
+  });
+
+  it("refuses a user-signed action for a different chain than the network", () => {
+    const mainnetAction = { type: "withdraw3", signatureChainId: "0x66eee", hyperliquidChain: "Mainnet", destination: "0x1", amount: "1", time: NOW };
+    expect(() => buildExchangeRequest({ network: TESTNET, action: mainnetAction, nonce: NOW, signature: sig })).toThrow(RangeError);
+    expect(() => buildExchangeRequest({ network: TESTNET, action: { ...mainnetAction, hyperliquidChain: "Testnet" }, nonce: NOW, signature: sig })).not.toThrow();
+  });
+
+  it("rejects expiresAfter and vaultAddress on user-signed actions", () => {
+    const action = { type: "approveAgent", signatureChainId: "0x66eee" };
+    expect(() => buildExchangeRequest({ network: TESTNET, action, nonce: NOW, signature: sig, expiresAfter: NOW })).toThrow(RangeError);
+    expect(() => buildExchangeRequest({ network: TESTNET, action, nonce: NOW, signature: sig, vaultAddress: "0x2222222222222222222222222222222222222222" })).toThrow(RangeError);
+    expect(buildExchangeRequest({ network: TESTNET, action, nonce: NOW, signature: sig })).toEqual({ action, nonce: NOW, signature: sig });
+  });
+
+  it("expiresAfterFromNow", () => {
+    expect(expiresAfterFromNow(NOW)).toBe(NOW + 15_000);
+    expect(expiresAfterFromNow(NOW, 30_000)).toBe(NOW + 30_000);
+  });
+});

@@ -1,0 +1,255 @@
+/**
+ * User-signed actions (main wallet only): `approveAgent`, `approveBuilderFee`, `withdraw3`, …
+ *
+ * Scheme (https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/signing, Python SDK
+ * `sign_user_signed_action`): EIP-712 domain `{name:"HyperliquidSignTransaction", version:"1",
+ * chainId: signatureChainId, verifyingContract: 0x0}`, primary type `HyperliquidTransaction:<Name>`; the message
+ * includes `hyperliquidChain: "Mainnet" | "Testnet"` (replay protection) and the action's `nonce`/`time`, which must
+ * equal the request nonce. `signatureChainId` may be any chain; wallets prefer the chain they are connected to.
+ *
+ * The builders here return both the **typed data** (for `walletClient.signTypedData` / wagmi `useSignTypedData`) and
+ * the **action** to post, derived from one set of inputs so they cannot drift apart. Types come from the SDK
+ * (`ApproveAgentTypes`, `ApproveBuilderFeeTypes`, `Withdraw3Types`).
+ *
+ * @module
+ */
+import {
+  ApproveAgentRequest,
+  ApproveAgentTypes,
+  ApproveBuilderFeeRequest,
+  ApproveBuilderFeeTypes,
+  Withdraw3Request,
+  Withdraw3Types,
+} from "@nktkas/hyperliquid/api/exchange";
+import { type AbstractWallet, canonicalize, type Signature, signUserSignedAction as sdkSignUserSignedAction } from "@nktkas/hyperliquid/signing";
+import * as v from "valibot";
+import { hashTypedData, recoverTypedDataAddress } from "viem";
+import type { NetworkConfig } from "../network/index.js";
+import { normalizeDecimal } from "../precision/index.js";
+import { MAX_PERP_BUILDER_FEE_TENTHS_BPS, tenthsBpsToPercentString } from "../risk/formulas.js";
+import { signatureToHex, ZERO_ADDRESS } from "./l1.js";
+
+/** EIP-712 field list. */
+export type Eip712Fields = ReadonlyArray<{ readonly name: string; readonly type: string }>;
+/** EIP-712 types object with a single primary type (as HL uses). */
+export type Eip712Types = Readonly<Record<string, Eip712Fields>>;
+
+/** Domain name of user-signed actions. */
+export const USER_SIGNED_DOMAIN_NAME = "HyperliquidSignTransaction";
+
+/** Typed data in the shape viem/wagmi `signTypedData` accept. `nonce`/`time` stay numbers (JSON-safe). */
+export interface UserSignedTypedData {
+  domain: { name: string; version: string; chainId: number; verifyingContract: `0x${string}` };
+  types: Record<string, Array<{ name: string; type: string }>>;
+  primaryType: string;
+  message: Record<string, unknown>;
+}
+
+/** A user-signed action ready to sign (typed data) and to post (action). */
+export interface PreparedUserSignedAction<A extends Record<string, unknown> = Record<string, unknown>> {
+  /** JSON action to post as `action` (with `nonce` equal to the request nonce). */
+  action: A;
+  /** Typed data to sign with the main wallet. */
+  typedData: UserSignedTypedData;
+  /** Request nonce (equals the action's `nonce`/`time`). */
+  nonce: number;
+}
+
+/** Network selector for user-signed actions. */
+export type UserSignedNetwork = Pick<NetworkConfig, "hyperliquidChain" | "defaultSignatureChainId">;
+
+/** Builds EIP-712 typed data for any user-signed action (`action` must contain `signatureChainId`). */
+export function userSignedTypedData(action: { signatureChainId: `0x${string}` } & Record<string, unknown>, types: Eip712Types): UserSignedTypedData {
+  const primaryType = Object.keys(types)[0];
+  if (primaryType === undefined) throw new RangeError("EIP-712 types must have a primary type");
+  const fields = types[primaryType] as Eip712Fields;
+  const message: Record<string, unknown> = {};
+  for (const f of fields) {
+    if (!(f.name in action)) throw new RangeError(`Action is missing EIP-712 field "${f.name}"`);
+    message[f.name] = action[f.name];
+  }
+  return {
+    domain: { name: USER_SIGNED_DOMAIN_NAME, version: "1", chainId: parseInt(action.signatureChainId, 16), verifyingContract: ZERO_ADDRESS },
+    types: { [primaryType]: fields.map((f) => ({ name: f.name, type: f.type })) },
+    primaryType,
+    message,
+  };
+}
+
+/** EIP-712 digest of a user-signed action (for raw-digest signers). */
+export function userSignedDigest(typedData: UserSignedTypedData): `0x${string}` {
+  return hashTypedData(typedData as Parameters<typeof hashTypedData>[0]);
+}
+
+/** Signs a user-signed action with a local/abstract wallet (delegates to the SDK). */
+export async function signUserSignedAction(params: {
+  wallet: AbstractWallet;
+  action: { signatureChainId: `0x${string}` } & Record<string, unknown>;
+  types: Eip712Types;
+}): Promise<Signature> {
+  return await sdkSignUserSignedAction({ wallet: params.wallet, action: params.action, types: params.types as Record<string, Eip712Fields> });
+}
+
+/** Recovers the signer of a user-signed action. */
+export async function recoverUserSignedSigner(params: { typedData: UserSignedTypedData; signature: Signature }): Promise<`0x${string}`> {
+  return await recoverTypedDataAddress({
+    ...(params.typedData as Parameters<typeof hashTypedData>[0]),
+    signature: signatureToHex(params.signature),
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// approveAgent
+// ---------------------------------------------------------------------------------------------
+
+/** HL caps `valid_until` at 180 days in the future (exchange endpoint docs). */
+export const MAX_AGENT_VALIDITY_MS = 180 * 24 * 60 * 60 * 1000;
+/** Max agent name length (HL UI and SDK schema; the `valid_until` suffix does not count). */
+export const MAX_AGENT_NAME_LENGTH = 16;
+
+/** `"<name> valid_until <ms>"`, the format HL parses for agent expiry. */
+export function formatAgentName(name: string, validUntilMs?: number): string {
+  validateAgentName(name);
+  if (validUntilMs === undefined) return name;
+  if (!Number.isSafeInteger(validUntilMs) || validUntilMs <= 0) throw new RangeError("validUntil must be a positive integer (ms)");
+  return `${name} valid_until ${validUntilMs}`;
+}
+
+/** Splits `"<name> valid_until <ms>"` into name and expiry. */
+export function parseAgentName(full: string): { name: string; validUntil?: number } {
+  const m = /^(.*) valid_until (\d+)$/.exec(full);
+  return m ? { name: m[1] as string, validUntil: Number(m[2]) } : { name: full };
+}
+
+function validateAgentName(name: string): void {
+  if (name.length === 0) throw new RangeError("Agent name must not be empty (Kokoah only uses named agents)");
+  if (name.length > MAX_AGENT_NAME_LENGTH) throw new RangeError(`Agent name must be at most ${MAX_AGENT_NAME_LENGTH} characters`);
+  if (/valid_until/.test(name)) throw new RangeError('Agent name must not contain "valid_until"');
+}
+
+/** Parameters for {@link buildApproveAgent}. */
+export interface ApproveAgentParams {
+  /** The new agent's address (generate a fresh key; never reuse an agent address). */
+  agentAddress: `0x${string}`;
+  /** Agent name without the suffix, 1–16 chars, e.g. "kokoah-web". */
+  agentName: string;
+  /** Expiry in ms since epoch; must be in the future and at most 180 days after `now`. */
+  validUntil: number;
+  /** Nonce (ms); also used as `now` for the expiry checks unless `now` is given. */
+  nonce: number;
+  now?: number;
+  network: UserSignedNetwork;
+  /** EIP-712 chain id (hex). Default: the network's default. Prefer the main wallet's connected chain. */
+  signatureChainId?: `0x${string}`;
+}
+
+/**
+ * Builds a named `approveAgent` with a `valid_until` expiry, for the main wallet to sign in the browser.
+ * Kokoah never uses the unnamed agent slot (HL's own app uses it and would de-register Kokoah's key).
+ */
+export function buildApproveAgent(params: ApproveAgentParams): PreparedUserSignedAction {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(params.agentAddress)) throw new RangeError("agentAddress must be a 20-byte hex address");
+  const now = params.now ?? params.nonce;
+  if (params.validUntil <= now) throw new RangeError("validUntil must be in the future");
+  if (params.validUntil > now + MAX_AGENT_VALIDITY_MS) throw new RangeError("validUntil must be at most 180 days in the future");
+  return prepare(
+    ApproveAgentRequest.entries.action,
+    ApproveAgentTypes,
+    {
+      type: "approveAgent",
+      agentAddress: params.agentAddress.toLowerCase(),
+      agentName: formatAgentName(params.agentName, params.validUntil),
+      nonce: params.nonce,
+    },
+    params,
+  );
+}
+
+/**
+ * Builds a revoke for a named agent: `approveAgent` with the same name and the zero address, which is how HL's app
+ * removes an agent (research B §1.6; the zero address for named agents is inferred — verify with the testnet spike).
+ */
+export function buildRevokeAgent(params: { agentName: string; nonce: number; network: UserSignedNetwork; signatureChainId?: `0x${string}` }): PreparedUserSignedAction {
+  return prepare(
+    ApproveAgentRequest.entries.action,
+    ApproveAgentTypes,
+    { type: "approveAgent", agentAddress: ZERO_ADDRESS, agentName: formatAgentName(params.agentName), nonce: params.nonce },
+    params,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// approveBuilderFee
+// ---------------------------------------------------------------------------------------------
+
+/** Parameters for {@link buildApproveBuilderFee}. */
+export interface ApproveBuilderFeeParams {
+  builder: `0x${string}`;
+  /** Max fee in tenths of a bp (100 = 0.1%, the perps cap). 0 revokes the approval. */
+  maxFeeTenthsBps: number;
+  nonce: number;
+  network: UserSignedNetwork;
+  signatureChainId?: `0x${string}`;
+}
+
+/**
+ * Builds `approveBuilderFee` for the main wallet (`maxFeeRate` as a percent string, e.g. 100 → "0.1%").
+ * A user may have at most 10 active builder approvals; 0 revokes (HL app behaviour, research B §4.3).
+ */
+export function buildApproveBuilderFee(params: ApproveBuilderFeeParams): PreparedUserSignedAction {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(params.builder)) throw new RangeError("builder must be a 20-byte hex address");
+  if (!Number.isInteger(params.maxFeeTenthsBps) || params.maxFeeTenthsBps < 0 || params.maxFeeTenthsBps > MAX_PERP_BUILDER_FEE_TENTHS_BPS) {
+    throw new RangeError(`maxFeeTenthsBps must be an integer between 0 and ${MAX_PERP_BUILDER_FEE_TENTHS_BPS} (0.1%)`);
+  }
+  return prepare(
+    ApproveBuilderFeeRequest.entries.action,
+    ApproveBuilderFeeTypes,
+    {
+      type: "approveBuilderFee",
+      maxFeeRate: tenthsBpsToPercentString(params.maxFeeTenthsBps),
+      builder: params.builder.toLowerCase(),
+      nonce: params.nonce,
+    },
+    params,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// withdraw3
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Builds `withdraw3` (bridge withdrawal to Arbitrum) for the main wallet. `time` equals the nonce.
+ * `amount` is normalized ("12.50" → "12.5"): the exact string is signed, so the posted action must carry the same one.
+ */
+export function buildWithdraw(params: {
+  destination: `0x${string}`;
+  amount: string | number;
+  nonce: number;
+  network: UserSignedNetwork;
+  signatureChainId?: `0x${string}`;
+}): PreparedUserSignedAction {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(params.destination)) throw new RangeError("destination must be a 20-byte hex address");
+  return prepare(
+    Withdraw3Request.entries.action,
+    Withdraw3Types,
+    { type: "withdraw3", destination: params.destination.toLowerCase(), amount: normalizeDecimal(params.amount), time: params.nonce },
+    params,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+
+function prepare(
+  schema: v.GenericSchema,
+  types: Eip712Types,
+  fields: Record<string, unknown> & { type: string },
+  params: { network: UserSignedNetwork; signatureChainId?: `0x${string}`; nonce: number },
+): PreparedUserSignedAction {
+  const signatureChainId = (params.signatureChainId ?? params.network.defaultSignatureChainId).toLowerCase() as `0x${string}`;
+  if (!/^0x[0-9a-f]+$/.test(signatureChainId)) throw new RangeError("signatureChainId must be a hex string");
+  const { type, ...rest } = fields;
+  const raw = { type, signatureChainId, hyperliquidChain: params.network.hyperliquidChain, ...rest };
+  const action = canonicalize(schema, v.parse(schema, raw)) as Record<string, unknown> & { signatureChainId: `0x${string}` };
+  return { action, typedData: userSignedTypedData(action, types), nonce: params.nonce };
+}

@@ -1,0 +1,49 @@
+# Changelog
+
+All notable changes to `@kokoah/shared` are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/)
+(pre-1.0: minor versions may break).
+
+## [0.1.1] - 2026-09-22
+
+### Fixed
+- `MarketRegistry.fromInfo` no longer fails as a whole on an unparseable coin name. Live HL testnet metadata contains
+  names such as `VOLMEX:$EVIV`, `i<3fl:TEST` and `tndex:A B:C`, and 0.1.0 threw, so no registry could be built at all.
+  Unparseable entries are now skipped: they keep their positional index (every other market's asset id stays
+  correct), are untradeable, fail `validateCoin`, and are reported by the new `registry.skippedEntries()` and
+  `DexInfo.skippedMarkets`. Structural mismatches still throw, because they would produce wrong asset ids: a
+  *parseable* coin on the wrong dex, or `perpDexs` that doesn't line up with `allPerpMetas`. Pass `strict: true`
+  for the 0.1.0 behaviour. Reported by kokoah-signer-service (`docs/SHARED_ISSUES.md` #1).
+
+### Added
+- `verifyPolicySignature(signed, { clockSkewMs })`: tolerance for `issuedAt` ahead of the verifier's clock. Default 0.
+  It never extends `expiresAt`. (SHARED_ISSUES #2)
+- `prepareL1Request` accepts `compileAction`'s result directly; the `HlAction` type needs no cast. (SHARED_ISSUES #4)
+- Test fixture: a live testnet `allPerpMetas` + `perpDexs` snapshot (2026-09-22).
+
+## [0.1.0] - 2026-09-21
+
+### Added
+- `network`: mainnet/testnet endpoints and signing flags, testnet default, `parseNetworkName`, `assertWriteAllowed`
+  mainnet write guard.
+- `markets`: asset ids (perp, spot, HIP-3, outcome), HIP-3 coin parsing, `MarketRegistry` from `allPerpMetas` /
+  `meta` / `perpDexs` / `spotMeta` / `perpConciseAnnotations` with positional ids for delisted markets, margin tiers,
+  margin modes, display names and categories, and `validateCoin`.
+- `precision`: exact-decimal price/size rounding per HL tick and lot rules, validation with suggestions, $10 minimum.
+- `risk`: margin tiers, initial/maintenance margin, tier-aware liquidation price, PnL/ROE, itemized fees, funding,
+  max loss at stop, R-multiple, book impact, and `assessOrderRisk` with typed warnings.
+- `intents`: valibot schemas for order, cancel, modify, leverage, isolated margin, schedule cancel and noop intents.
+- `actions`: `compileAction` producing canonical HL wire actions via the SDK's schemas; Kokoah-tagged cloids.
+- `signing`: L1 and user-signed signing wrappers, EIP-712 builders for approveAgent / approveBuilderFee / withdraw3,
+  digest helpers for KMS signers, `MonotonicNonceManager`, guarded `/exchange` request assembly.
+- `policy`: deny-by-default signing policy with hard-denied fund movements, limits, presets, and EIP-712 signed
+  policies with verification.
+- `errors`: HL error strings and order statuses mapped to stable codes and plain-English messages.
+- `guardians`: nine guardian rule types with schemas and pure, deterministic `evaluateRule`.
+- Security review fixes before release: fail-closed validation of wire actions in `evaluatePolicy`; modify/batchModify
+  covered by the loss lock and stop-loss rule; trigger legs valued at `max(limit, trigger, mark)` and banded against
+  mark when already crossed; stop-loss coverage and optional `maxStopLossDistancePct`; `allowedCoins` enforced on
+  cancels; guardians never loosen an existing stop and ignore flipped positions; tier-boundary fix in
+  `liquidationPrice`; chain check in `buildExchangeRequest`; bounded `MonotonicNonceManager.observe`.
+- Golden signing vectors from `hyperliquid-python-sdk` 0.24.0 (24 vectors), real `/info` fixtures, testnet spikes
+  and a read-only WebSocket finding.

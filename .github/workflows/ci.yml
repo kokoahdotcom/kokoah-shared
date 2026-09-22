@@ -1,0 +1,22 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      # Frozen lockfile: fail if pnpm-lock.yaml does not match package.json (pnpm also defaults to this when CI=true).
+      - run: pnpm install --frozen-lockfile
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build

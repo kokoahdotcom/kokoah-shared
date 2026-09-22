@@ -1,0 +1,766 @@
+{
+  "generator": "scripts/golden/generate.py",
+  "pythonSdkVersion": "0.24.0",
+  "ethAccountVersion": "0.13.7",
+  "msgpackVersion": "1.2.2",
+  "note": "Fake public test keys. Python's to_hex() does not zero-pad r/s; compare signatures numerically.",
+  "floatToWireChecks": {
+    "100000.0": "100000",
+    "0.001": "0.001",
+    "2500.5": "2500.5",
+    "6721.3": "6721.3",
+    "1.5": "1.5",
+    "180.25": "180.25",
+    "0.012345": "0.012345",
+    "1000.0": "1000",
+    "45.123": "45.123"
+  },
+  "vectors": [
+    {
+      "name": "order_limit_builder_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 0,
+            "b": true,
+            "p": "100000",
+            "s": "0.001",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Gtc"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000001"
+          }
+        ],
+        "grouping": "na",
+        "builder": {
+          "b": "0x1111111111111111111111111111111111111111",
+          "f": 25
+        }
+      },
+      "connectionId": "0x67358fddbce7d08d4d1c33f865b20d96c4e9f1ba1e8524843de0280b66d7115d",
+      "signature": {
+        "r": "0x1b9a8f2e4bc7ca8b96e8b3551d67ca5a94360d8fd9fbceea02930d28aeff58df",
+        "s": "0x6572aed68d3da09471d098d59172b7cb08197be45de835305405d4e949fb5f29",
+        "v": 27
+      }
+    },
+    {
+      "name": "order_limit_builder_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 0,
+            "b": true,
+            "p": "100000",
+            "s": "0.001",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Gtc"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000001"
+          }
+        ],
+        "grouping": "na",
+        "builder": {
+          "b": "0x1111111111111111111111111111111111111111",
+          "f": 25
+        }
+      },
+      "connectionId": "0x67358fddbce7d08d4d1c33f865b20d96c4e9f1ba1e8524843de0280b66d7115d",
+      "signature": {
+        "r": "0x133e20c85a94b11fa4d0784d0600195a15f92eb8b6375ec5d1d1be69cebbe370",
+        "s": "0x1dfc3e1cba1a057e2fabeb5cc55b94ae73b89c9c0f84c9f831dae75d25d798cd",
+        "v": 27
+      }
+    },
+    {
+      "name": "order_normal_tpsl_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 1,
+            "b": true,
+            "p": "2500.5",
+            "s": "0.5",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Gtc"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000001"
+          },
+          {
+            "a": 1,
+            "b": false,
+            "p": "2430",
+            "s": "0.5",
+            "r": true,
+            "t": {
+              "trigger": {
+                "isMarket": true,
+                "triggerPx": "2700",
+                "tpsl": "tp"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000002"
+          },
+          {
+            "a": 1,
+            "b": false,
+            "p": "2160",
+            "s": "0.5",
+            "r": true,
+            "t": {
+              "trigger": {
+                "isMarket": true,
+                "triggerPx": "2400",
+                "tpsl": "sl"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000003"
+          }
+        ],
+        "grouping": "normalTpsl",
+        "builder": {
+          "b": "0x1111111111111111111111111111111111111111",
+          "f": 10
+        }
+      },
+      "connectionId": "0x9fea084c99db7a0b2e295892a79b8c043450fe0ab21d7a12471ef54cd094afe4",
+      "signature": {
+        "r": "0xd7241b5d9329a00ad8c07aa66949da5379c8c5d0b286d67afebc32150c8bb370",
+        "s": "0x7d407c7f42a4deb2336ac36914f42d50ee4f788c34abe2b3eb73fc923f27ee50",
+        "v": 28
+      }
+    },
+    {
+      "name": "order_hip3_market_ioc_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 110052,
+            "b": false,
+            "p": "6721.3",
+            "s": "0.25",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Ioc"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000004"
+          }
+        ],
+        "grouping": "na",
+        "builder": {
+          "b": "0x1111111111111111111111111111111111111111",
+          "f": 25
+        }
+      },
+      "connectionId": "0x9bbfc2f9b80503a352b8607f7cf04ee1f8f05bc0d5f419c403028287b06e1592",
+      "signature": {
+        "r": "0xaf42832a5963f81f3913088ac98f2a15745b0071522292d213f4674cecc0a7cc",
+        "s": "0x46a95e40d822eb83ad629fb478d6942d65b4a0b10c82c31ab83eac680a8e77fa",
+        "v": 27
+      }
+    },
+    {
+      "name": "order_vault_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": "0x2222222222222222222222222222222222222222",
+      "expiresAfter": null,
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 5,
+            "b": false,
+            "p": "180.25",
+            "s": "1.5",
+            "r": true,
+            "t": {
+              "limit": {
+                "tif": "Gtc"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000005"
+          }
+        ],
+        "grouping": "na",
+        "builder": {
+          "b": "0x1111111111111111111111111111111111111111",
+          "f": 25
+        }
+      },
+      "connectionId": "0xe4db1d402003f00122cbb87fdfb5a92e1b6044e2dc7da089fd4225d824532bde",
+      "signature": {
+        "r": "0xd98f5c4745d674ebb2cb5a2e62cbdde654b8707248033768afabf7156c7a6479",
+        "s": "0x5662153d68d27fe3ca89e142791926bb70a6affa17ebd09e4f60b12555dfba8d",
+        "v": 27
+      }
+    },
+    {
+      "name": "order_expires_after_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": 1790000015000,
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 15,
+            "b": true,
+            "p": "0.012345",
+            "s": "1000",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Alo"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000006"
+          }
+        ],
+        "grouping": "na"
+      },
+      "connectionId": "0xa0b97241f0f3089be04dd7f82b64480d82a36e5748c5036d03974fceebdca6d4",
+      "signature": {
+        "r": "0xb977241475d489e4ad6a677b62107915389b90ff773f41b728f5f78b467c163a",
+        "s": "0x754e71368da82042cb628c7a859b1115cf0782bcacb143da75c442d6a3d7ee7f",
+        "v": 28
+      }
+    },
+    {
+      "name": "order_vault_and_expires_after_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": "0x2222222222222222222222222222222222222222",
+      "expiresAfter": 1790000015000,
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 159,
+            "b": true,
+            "p": "45.123",
+            "s": "2",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Gtc"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000001"
+          }
+        ],
+        "grouping": "na",
+        "builder": {
+          "b": "0x1111111111111111111111111111111111111111",
+          "f": 100
+        }
+      },
+      "connectionId": "0xad3f3a5812a7cdf3a35527b3a1d210c436fd585a381ee7a8011c4f8b1b0b34f4",
+      "signature": {
+        "r": "0xce972d493182b9bf3e7762048b7c90233756f73ce22f39ec987b1d8008ca26f3",
+        "s": "0x3ee3f2aca6db43b0342dcca53c80c99b9d540c9a1481add5d6792905b4c59bd8",
+        "v": 27
+      }
+    },
+    {
+      "name": "order_stop_limit_position_tpsl_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 0,
+            "b": false,
+            "p": "89500",
+            "s": "0.002",
+            "r": true,
+            "t": {
+              "trigger": {
+                "isMarket": false,
+                "triggerPx": "90000",
+                "tpsl": "sl"
+              }
+            },
+            "c": "0x6b6f0101000000000000000000000007"
+          }
+        ],
+        "grouping": "positionTpsl",
+        "builder": {
+          "b": "0x1111111111111111111111111111111111111111",
+          "f": 25
+        }
+      },
+      "connectionId": "0xff6960687bf053c6736b5c5ef37e025eade21a2fb330850e1e8e697f15317b2c",
+      "signature": {
+        "r": "0x701ba85dd598bb2fcac8f39849254ccaeddd366e666c9221d315fbbc7c4d5fd1",
+        "s": "0x4f4270ddc37121180e18d732930bb90e5527d4e51c4e2a24801a3a8b3c4b5e9c",
+        "v": 27
+      }
+    },
+    {
+      "name": "cancel_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "cancel",
+        "cancels": [
+          {
+            "a": 0,
+            "o": 123456789012
+          },
+          {
+            "a": 110052,
+            "o": 42
+          }
+        ]
+      },
+      "connectionId": "0x328487f70e5625ca99c4bf2eff82e015b03cb24a34f0d910c60a42413f2fe1b4",
+      "signature": {
+        "r": "0xb1a8adb5de29b3b28cdb48812a086aa3b536dd953b981f542ec8d5bcf442b81c",
+        "s": "0x7e822c58b779e0900ba3256e18c34dc3230b4c46c97a2ae56386f0979e14ec2",
+        "v": 27
+      },
+      "note": "oid above 2^32 exercises uint64 msgpack encoding"
+    },
+    {
+      "name": "cancel_by_cloid_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "cancelByCloid",
+        "cancels": [
+          {
+            "asset": 1,
+            "cloid": "0x6b6f0101000000000000000000000001"
+          }
+        ]
+      },
+      "connectionId": "0xe284cd1093c57c550048d8a06eb0469bff0a4b53e433ebf27cc4acaba311aedd",
+      "signature": {
+        "r": "0xef07be5df5845ce72645616894dfa72667b0f2b9ae02b6e7c09c20ef1180e99c",
+        "s": "0x4a2204a5d6b302307f178e37c5576894e150bc5e0fe13b3855801aebf328c16c",
+        "v": 28
+      }
+    },
+    {
+      "name": "update_leverage_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "updateLeverage",
+        "asset": 110052,
+        "isCross": false,
+        "leverage": 20
+      },
+      "connectionId": "0xe4b2f8482f7ed4ff7617a1c08a1a9af31adc8cbb9600098551624d02b6f7055f",
+      "signature": {
+        "r": "0x1888338c162a9a020d83f313c9e8165ca3dce48a710242e19949b7a06f5ecce7",
+        "s": "0x73cde127f0ac39ce3efa60b0b29fced91a97e149fe0b6d10aa20c5bede1e400b",
+        "v": 27
+      }
+    },
+    {
+      "name": "update_isolated_margin_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "updateIsolatedMargin",
+        "asset": 5,
+        "isBuy": true,
+        "ntli": -2500000
+      },
+      "connectionId": "0xaf4a72e3fac215dac3db6959dae1e2e92393821588deba8df11fed588902fc3c",
+      "signature": {
+        "r": "0xad84def6479c90dae02ac8fbc5e7518ac93ae293dfbbaf8613e0e54c1577113",
+        "s": "0x4cc4a646ad01119d93ad9f13085c876ecb0aa61ef62bfb12cd04dcd08c8a76a3",
+        "v": 27
+      },
+      "note": "negative ntli (remove 2.5 USD)"
+    },
+    {
+      "name": "schedule_cancel_set_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "scheduleCancel",
+        "time": 1790000060000
+      },
+      "connectionId": "0x16aca1027563800466f79195f16098da157ed4688d069c658dba70fd789f6b2e",
+      "signature": {
+        "r": "0xca4def9b3b48b705d48ffa9dc42d1fbc491926896278ba6d62007074f5406354",
+        "s": "0x4e46c3310e67ecb5aa31e5b49adc01681cc98e3a19524e0e46f014ac634e044f",
+        "v": 28
+      }
+    },
+    {
+      "name": "schedule_cancel_clear_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "scheduleCancel"
+      },
+      "connectionId": "0xd9a80cdda7808412a0585ab1350239694d948e17428cd6020e5a3d58b3d3d57a",
+      "signature": {
+        "r": "0x55d2eda55aae43c453e2e4a4de02c0c47261292e37d11f472dfd8c1195b2ae78",
+        "s": "0x69fb94fe2a9b9a7253b0e1394b28f3874739203c5a398daf2926d14e318adf94",
+        "v": 28
+      }
+    },
+    {
+      "name": "modify_by_oid_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "modify",
+        "oid": 987654321,
+        "order": {
+          "a": 1,
+          "b": true,
+          "p": "2490",
+          "s": "0.5",
+          "r": false,
+          "t": {
+            "limit": {
+              "tif": "Gtc"
+            }
+          },
+          "c": "0x6b6f0101000000000000000000000008"
+        }
+      },
+      "connectionId": "0xc4a63ceeeed96b9aeae87f2d6cae9fe555951168a8dee516bf81be9cb91f0c1c",
+      "signature": {
+        "r": "0x33655654070da2dc693751e3cb522dd65873360b9abc393d968e2bba0023bf64",
+        "s": "0x39423905506badd355177b6e589c43952235ff5cb96e3109f4183c02bd78fd45",
+        "v": 27
+      }
+    },
+    {
+      "name": "modify_by_cloid_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "modify",
+        "oid": "0x6b6f0101000000000000000000000007",
+        "order": {
+          "a": 0,
+          "b": false,
+          "p": "81000",
+          "s": "0.002",
+          "r": true,
+          "t": {
+            "trigger": {
+              "isMarket": true,
+              "triggerPx": "90000",
+              "tpsl": "sl"
+            }
+          },
+          "c": "0x6b6f0101000000000000000000000008"
+        }
+      },
+      "connectionId": "0x83c9d73995ee485df2900fa6b30ba5b86bae628c3ac0907733837e0015e0e424",
+      "signature": {
+        "r": "0xc4398588cfdf023ac8346b91db4b2f83823320a1e5d8d7981cc0dea3e0f2bb2f",
+        "s": "0x3d16a47de9d96d1dff6fef254b3b03791cca43b554129533d52de5e25c16cbd3",
+        "v": 27
+      }
+    },
+    {
+      "name": "batch_modify_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "batchModify",
+        "modifies": [
+          {
+            "oid": 1,
+            "order": {
+              "a": 0,
+              "b": true,
+              "p": "99000",
+              "s": "0.001",
+              "r": false,
+              "t": {
+                "limit": {
+                  "tif": "Gtc"
+                }
+              },
+              "c": "0x6b6f0101000000000000000000000001"
+            }
+          },
+          {
+            "oid": "0x6b6f0101000000000000000000000002",
+            "order": {
+              "a": 1,
+              "b": false,
+              "p": "2600",
+              "s": "0.1",
+              "r": false,
+              "t": {
+                "limit": {
+                  "tif": "Gtc"
+                }
+              },
+              "c": "0x6b6f0101000000000000000000000003"
+            }
+          }
+        ]
+      },
+      "connectionId": "0x2610a03e32d7b65ac779c7c4f40cd3ac6097d58b4ead15e5638fa06b647cc61f",
+      "signature": {
+        "r": "0x456ac2606a7eb8f8ec44058c809668dacc996e048579d296f01ec6d90c54eb76",
+        "s": "0x202c0b17c635612a012a91bfbfcfc733862f67bd620d1ec9109c721e22c2dd7e",
+        "v": 27
+      },
+      "note": "sign-only vector (compileAction does not emit batchModify)"
+    },
+    {
+      "name": "noop_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "noop"
+      },
+      "connectionId": "0xc2616bed6298b42fb871b0b1d3d2b33f28f4900fdbb522b83c952aff395ba7be",
+      "signature": {
+        "r": "0x60535d19bb994cc61992b71c0bcd5d927a9d68365764dcab3a7a2bb0515d29e7",
+        "s": "0x2a5872dca807ad009cb56b40be2e7074d35327f8c8350ad49d492f751f7e664a",
+        "v": 27
+      }
+    },
+    {
+      "name": "approve_agent_mainnet",
+      "kind": "userSigned",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "type": "approveAgent",
+        "agentAddress": "0x6a9296ceb89d12e1f53b2dd5df45d3adb3a814c2",
+        "agentName": "kokoah-web valid_until 1792592000000",
+        "nonce": 1790000000000,
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Mainnet"
+      },
+      "signature": {
+        "r": "0xa8640d7035ab0143d3756d51d8244172e33b3b6194ca4c5a951f7d5ef13b5b80",
+        "s": "0x1815998f48e56e750e6190a1dcd7b461e287bcedbb1b416645d0af127a4755a5",
+        "v": 28
+      }
+    },
+    {
+      "name": "approve_agent_testnet",
+      "kind": "userSigned",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "type": "approveAgent",
+        "agentAddress": "0x6a9296ceb89d12e1f53b2dd5df45d3adb3a814c2",
+        "agentName": "kokoah-web valid_until 1792592000000",
+        "nonce": 1790000000000,
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Testnet"
+      },
+      "signature": {
+        "r": "0x20611e2cf07850a173ca30b81a7a81da1eb26ea24dda31bdf3f8bc6369208c78",
+        "s": "0x571fe71606f14258bc9d4aac79564e26135aacba463cd9def19486f9ae6818f5",
+        "v": 28
+      }
+    },
+    {
+      "name": "approve_builder_fee_mainnet",
+      "kind": "userSigned",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "maxFeeRate": "0.1%",
+        "builder": "0x1111111111111111111111111111111111111111",
+        "nonce": 1790000000000,
+        "type": "approveBuilderFee",
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Mainnet"
+      },
+      "signature": {
+        "r": "0xe06018619cc2feab04d3b6290b70b699ceb3a903ac7fe109cbb84bad27620ce2",
+        "s": "0x1d331cd17ef73d1e5312ecb57bbf0c1b9399aaa652ae1be95259e53bff5914e8",
+        "v": 27
+      }
+    },
+    {
+      "name": "approve_builder_fee_testnet",
+      "kind": "userSigned",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "maxFeeRate": "0.025%",
+        "builder": "0x1111111111111111111111111111111111111111",
+        "nonce": 1790000000000,
+        "type": "approveBuilderFee",
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Testnet"
+      },
+      "signature": {
+        "r": "0xc2bc5a9ca9aaa2f5a6cba58d297629ce76237d40b58c3a3a23da7f5ef24ff95",
+        "s": "0x7f618dedae61daa6783f4cae1e8594cb5548813ad982efa5591a3060604e077",
+        "v": 27
+      }
+    },
+    {
+      "name": "withdraw_mainnet",
+      "kind": "userSigned",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "destination": "0x3333333333333333333333333333333333333333",
+        "amount": "12.5",
+        "time": 1790000000000,
+        "type": "withdraw3",
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Mainnet"
+      },
+      "signature": {
+        "r": "0xc639d170a21f2605a638c9d3ffc8b918ede9403a68297f4fee65212c3af668dc",
+        "s": "0x68e464a9185383d965803975a724bd58cbc04b3d4780b83d79ffa49fee0c79c4",
+        "v": 27
+      }
+    },
+    {
+      "name": "approve_builder_fee_chain_a4b1_mainnet",
+      "kind": "userSigned",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "type": "approveBuilderFee",
+        "signatureChainId": "0xa4b1",
+        "hyperliquidChain": "Mainnet",
+        "maxFeeRate": "0.05%",
+        "builder": "0x1111111111111111111111111111111111111111",
+        "nonce": 1790000000000
+      },
+      "signature": {
+        "r": "0x492b526b9b87d68602df9853e6dbc8b5c02f819f60355ecf0a53f22f01bb557",
+        "s": "0x15c9775ba7dbd4d2814776d9bf08b94aadc0f978a0fd6c183cb723bd84886b9",
+        "v": 28
+      }
+    }
+  ]
+}
