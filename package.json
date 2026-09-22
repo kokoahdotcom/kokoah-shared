@@ -1,6 +1,6 @@
 {
   "name": "@kokoah/shared",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Shared TypeScript library for Kokoah: Hyperliquid adapter, markets, precision, risk, intents, action compiler, signing, policy, errors and guardians.",
   "type": "module",

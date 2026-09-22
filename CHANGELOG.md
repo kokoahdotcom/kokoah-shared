@@ -4,6 +4,22 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/)
 (pre-1.0: minor versions may break).
 
+## [0.1.2] - 2026-09-22
+
+### Fixed
+- `marketTriggerLimitPrice` (the limit price of market-type triggers: `stopMarket`, `takeProfitMarket` and market
+  TP/SL legs) now follows the same rule as `marketOrderLimitPrice`: when rounding trigger ± 10% toward the trigger
+  lands on the trigger itself (the tick is coarser than 10% of the price, e.g. trigger `0.00001` with `szDecimals` 1),
+  it rounds one tick away instead, so the triggered order keeps room to fill. 0.1.1 sent `p` equal to the trigger,
+  which a fast market leaves unfilled. A sell at the smallest positive tick keeps it (there is no lower price). The
+  result can exceed the 10% tolerance by one tick, so on these markets `evaluatePolicy`'s trigger band
+  (max(`priceBandPct`, 10%)) now denies the wire leg with `PRICE_OUTSIDE_BAND` instead of letting an unfillable stop
+  through. Prices with at least ten ticks of room are unchanged.
+
+### Removed
+- `actionType(action)` from `actions` (unused; read `action.type`).
+- `maxLeverageAt(tiers, notional)` from `risk` (unused duplicate of `maxLeverageForNotional`).
+
 ## [0.1.1] - 2026-09-22
 
 ### Fixed

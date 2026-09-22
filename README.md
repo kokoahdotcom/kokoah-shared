@@ -208,7 +208,8 @@ compiled.vaultAddress; // for the request envelope, when the intent names a sub-
 
 Rules: market orders become IOC limits at mid ± slippage (default 100 bps, max 1000), rounded toward mid; attached
 TP/SL become `normalTpsl` children (reduce-only, opposite side, same size); market-type triggers carry
-`isMarket: true` and a limit price at trigger ± 10%; `positionTpsl: true` gives grouping `positionTpsl`. Sizes and
+`isMarket: true` and a limit price at trigger ± 10%, rounded toward the trigger (both prices step one tick further when
+the tick is coarser than the tolerance, so the order stays marketable); `positionTpsl: true` gives grouping `positionTpsl`. Sizes and
 prices must already be valid for the market — the compiler **rejects** (`SIZE_PRECISION` / `PRICE_PRECISION`, with the
 rounded suggestion) rather than sign a different number than the intent shows.
 
@@ -503,7 +504,7 @@ function assessOrderRisk(input: OrderRiskInput): OrderRiskAssessment;
 ## Known limitations and open questions
 
 - **Market-type trigger limit price.** For `isMarket: true` triggers the compiler sends `p = trigger ± 10%` (HL's
-  documented market TP/SL tolerance). HL's docs don't state what `p` must be for market triggers; verify on testnet.
+  documented market TP/SL tolerance), or one tick beyond the trigger when the tick is coarser than 10% of the price. HL's docs don't state what `p` must be for market triggers; verify on testnet.
 - **`modify` carries no builder field** in HL's schema; whether a modified order keeps the original order's builder fee
   is undocumented. Policy only enforces the builder on `order` actions.
 - **Modify by cloid, reusing the cloid** on the replacement order: untested against HL (spike 02 checks it). Guardians

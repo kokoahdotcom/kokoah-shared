@@ -6,7 +6,7 @@
  *
  * @module
  */
-import { type MarginTier, maintenanceSchedule, tierForNotional } from "./margin.js";
+import { type MarginTier, maintenanceSchedule } from "./margin.js";
 
 /** Position direction. */
 export type PositionSide = "long" | "short";
@@ -359,13 +359,4 @@ export function visibleDepthUsd(input: { levels: ReadonlyArray<BookLevel>; midPr
   let total = 0;
   for (const l of input.levels) if (l.px >= lo && l.px <= hi) total += l.px * l.sz;
   return total;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Misc
-// ---------------------------------------------------------------------------------------------
-
-/** Maximum leverage allowed at a notional given the tiers (re-exported convenience). */
-export function maxLeverageAt(tiers: ReadonlyArray<MarginTier>, notionalUsd: number): number {
-  return tierForNotional(tiers, notionalUsd).maxLeverage;
 }

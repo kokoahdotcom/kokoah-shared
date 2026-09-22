@@ -71,6 +71,19 @@ describe("market order pricing", () => {
     expect(marketTriggerLimitPrice({ triggerPrice: "2700", isBuy: false, szDecimals: 4 })).toBe("2430");
     expect(marketTriggerLimitPrice({ triggerPrice: "1.2345", isBuy: true, szDecimals: 0 })).toBe("1.3579"); // 1.35795 → down
   });
+  it("market trigger limit price steps one tick away when the tick is coarser than the 10% tolerance", () => {
+    // szDecimals 1 → 5 price decimals: tick 0.00001. ±10% of 0.00001 rounds back onto the trigger, leaving no room.
+    expect(marketTriggerLimitPrice({ triggerPrice: "0.00001", isBuy: true, szDecimals: 1 })).toBe("0.00002");
+    // A sell at the smallest positive tick has no lower price: it keeps the lowest one there is.
+    expect(marketTriggerLimitPrice({ triggerPrice: "0.00001", isBuy: false, szDecimals: 1 })).toBe("0.00001");
+    expect(marketTriggerLimitPrice({ triggerPrice: "0.00002", isBuy: false, szDecimals: 1 })).toBe("0.00001");
+    expect(marketTriggerLimitPrice({ triggerPrice: "0.00003", isBuy: true, szDecimals: 1 })).toBe("0.00004");
+    // szDecimals 5 → 1 price decimal: tick 0.1 is 20% of 0.5.
+    expect(marketTriggerLimitPrice({ triggerPrice: "0.5", isBuy: true, szDecimals: 5 })).toBe("0.6");
+    expect(marketTriggerLimitPrice({ triggerPrice: "0.5", isBuy: false, szDecimals: 5 })).toBe("0.4");
+    // Enough ticks inside the tolerance: unchanged (rounded toward the trigger).
+    expect(marketTriggerLimitPrice({ triggerPrice: "0.0001", isBuy: false, szDecimals: 1 })).toBe("0.00009");
+  });
 });
 
 describe("compileAction", () => {

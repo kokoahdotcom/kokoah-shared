@@ -10,7 +10,8 @@
  * - Market orders are IOC limit orders at mid ± slippage, rounded to a valid tick toward the mid so the price never
  *   exceeds the slippage tolerance (if that would not be marketable, one tick further).
  * - Market-type triggers (stopMarket, takeProfitMarket and market TP/SL legs) carry `isMarket: true` and a limit price
- *   at the trigger ± 10%, HL's documented market TP/SL slippage tolerance.
+ *   at the trigger ± 10%, HL's documented market TP/SL slippage tolerance, rounded the same way (one tick further when
+ *   rounding toward the trigger would land on it).
  * - Attached TP/SL legs use grouping `normalTpsl`: children are reduce-only, opposite side, same size as the parent.
  * - Sizes and prices must already be valid for the market (the UI shows the rounded values); the compiler rejects
  *   anything it would have to round, instead of silently signing a different number.
@@ -375,12 +376,27 @@ export function marketOrderLimitPrice(input: {
   }
 }
 
-/** Limit price for a market-type trigger: trigger ± 10% (HL's market TP/SL tolerance), rounded toward the trigger. */
+/**
+ * Limit price for a market-type trigger: trigger ± 10% (HL's market TP/SL tolerance), rounded to a valid tick toward
+ * the trigger (buy: down, sell: up). Same rule as {@link marketOrderLimitPrice}: when the tick is coarser than the
+ * tolerance, so that rounding toward the trigger lands on (or past) it, the price is rounded one tick away instead, so
+ * the order keeps room to fill. This can exceed the 10% tolerance by up to one tick. A sell already at the smallest
+ * positive tick has no lower price and keeps it.
+ */
 export function marketTriggerLimitPrice(input: { triggerPrice: number | string; isBuy: boolean; szDecimals: number; priceKind?: PriceKind }): string {
+  const kind = input.priceKind ?? "perp";
   const trig = parseDec(input.triggerPrice);
   const delta = decMul(trig, parseDec(`${MARKET_TRIGGER_SLIPPAGE_BPS}e-4`));
-  const raw = input.isBuy ? decAdd(trig, delta) : decAdd(trig, { m: -delta.m, s: delta.s });
-  return roundPriceToTick(decToString(raw), input.szDecimals, input.priceKind ?? "perp", input.isBuy ? "down" : "up");
+  const raw = decToString(input.isBuy ? decAdd(trig, delta) : decAdd(trig, { m: -delta.m, s: delta.s }));
+  const px = roundPriceToTick(raw, input.szDecimals, kind, input.isBuy ? "down" : "up");
+  const cmp = decCompare(parseDec(px), trig);
+  if (input.isBuy ? cmp > 0 : cmp < 0) return px;
+  try {
+    return roundPriceToTick(raw, input.szDecimals, kind, input.isBuy ? "up" : "down");
+  } catch {
+    // A sell whose price rounds down to zero: the smallest positive tick is already the lowest price there is.
+    return px;
+  }
 }
 
 function requireSize(size: string, market: MarketInfo): string {
@@ -430,9 +446,4 @@ function resolveBuilder(builder: BuilderConfig | null | undefined, market: Marke
 function canonical<S extends v.GenericSchema>(schema: S, raw: unknown): v.InferOutput<S> {
   const parsed = v.parse(schema, raw);
   return canonicalize(schema, parsed);
-}
-
-/** The action `type` string of a wire action. */
-export function actionType(action: { type: string }): string {
-  return action.type;
 }
