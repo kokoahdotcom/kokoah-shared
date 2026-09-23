@@ -7,12 +7,15 @@
  * - Sizes: rounded to the asset's `szDecimals`.
  * - Trailing zeros must be removed before signing (signing docs), so every formatter here returns
  *   a normalized string ("1000", never "1000.0").
- * - Minimum order value is $10 for perps (error `MinTradeNtl`).
+ * - Minimum order value is $10 for perps (error `MinTradeNtl`). The only exception is a reduce-only order that closes
+ *   the entire position (HL docs, error responses; confirmed on testnet: a reduce-only *partial* close worth $8.55 was
+ *   rejected).
  *
  * @module
  */
 import {
   type Dec,
+  decAdd,
   decCompare,
   decDecimals,
   decExponent,
@@ -194,6 +197,81 @@ export function validateOrderNotional(
   const ok = decCompare(notional, min) >= 0;
   const notionalUsd = decToNumber(notional);
   return { ok, notionalUsd, minNotionalUsd, shortfallUsd: ok ? 0 : minNotionalUsd - notionalUsd };
+}
+
+/**
+ * Smallest size (at `szDecimals`) whose value at `price` reaches `minNotionalUsd`.
+ *
+ * @throws {PrecisionError} on malformed input.
+ */
+export function minOrderSize(price: number | string, szDecimals: number, minNotionalUsd: number = MIN_ORDER_NOTIONAL_USD): string {
+  assertSzDecimals(szDecimals);
+  const px = absDec(parseDec(price));
+  if (decSign(px) === 0) throw new PrecisionError("Price must be positive");
+  const min = parseDec(minNotionalUsd);
+  const step = decStep(szDecimals);
+  let size = parseDec(formatSize(minNotionalUsd / decToNumber(px), szDecimals, "up"));
+  if (decSign(size) === 0) size = step;
+  while (decCompare(decMul(size, px), min) < 0) size = decAdd(size, step);
+  return decToString(size);
+}
+
+/** Result of {@link checkMinOrderNotional}. */
+export interface MinNotionalCheck {
+  /** The order meets the minimum or is exempt. */
+  ok: boolean;
+  /** A reduce-only order that closes the whole position: HL accepts it below the minimum. */
+  exempt: boolean;
+  notionalUsd: number;
+  minNotionalUsd: number;
+  /** Smallest valid size at this price. */
+  minSize: string;
+  /** Plain-English problem with the valid size to use; empty when ok. */
+  message: string;
+}
+
+/**
+ * Hyperliquid's minimum order value, as the exchange applies it: `size × price` must be at least $10, except for a
+ * reduce-only order that closes the entire position (`size` ≥ the position size). Partial closes are not exempt.
+ * `price` should be the order's price (limit, or a market order's worst-case price).
+ */
+export function checkMinOrderNotional(input: {
+  size: number | string;
+  price: number | string;
+  szDecimals: number;
+  reduceOnly?: boolean;
+  /** Absolute size of the position a reduce-only order reduces. */
+  positionSize?: number | string;
+  /** For messages, e.g. "BTC". */
+  symbol?: string;
+  minNotionalUsd?: number;
+}): MinNotionalCheck {
+  const minNotionalUsd = input.minNotionalUsd ?? MIN_ORDER_NOTIONAL_USD;
+  const check = validateOrderNotional(input.size, input.price, minNotionalUsd);
+  const minSize = minOrderSize(input.price, input.szDecimals, minNotionalUsd);
+  const position = input.positionSize !== undefined ? absDec(parseDec(input.positionSize)) : undefined;
+  const closesAll = input.reduceOnly === true && position !== undefined && decSign(position) > 0 && decCompare(absDec(parseDec(input.size)), position) >= 0;
+  const exempt = !check.ok && closesAll;
+  const ok = check.ok || exempt;
+  let message = "";
+  if (!ok) {
+    const unit = input.symbol ? ` ${input.symbol}` : "";
+    const minValue = decToNumber(decMul(parseDec(minSize), absDec(parseDec(input.price))));
+    const head = `Order value $${round2(check.notionalUsd)} is below Hyperliquid's $${minNotionalUsd} minimum.`;
+    if (input.reduceOnly && position !== undefined && decSign(position) > 0) {
+      message =
+        decCompare(parseDec(minSize), position) >= 0
+          ? `${head} Close the whole position (${decToString(position)}${unit}) instead; only a full close may be smaller.`
+          : `${head} Use at least ${minSize}${unit} (about $${round2(minValue)}), or close the whole position.`;
+    } else {
+      message = `${head} Use at least ${minSize}${unit} (about $${round2(minValue)}).`;
+    }
+  }
+  return { ok, exempt, notionalUsd: check.notionalUsd, minNotionalUsd, minSize, message };
+}
+
+function round2(x: number): string {
+  return (Math.round(x * 100) / 100).toFixed(2);
 }
 
 /**

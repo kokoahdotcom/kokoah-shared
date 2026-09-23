@@ -311,13 +311,17 @@ export function assessOrderRisk(input: OrderRiskInput): OrderRiskAssessment {
   }
 
   // --- Minimum notional ------------------------------------------------------------------------
+  // HL exempts only a reduce-only order that closes the whole position; a reduce-only partial close is rejected.
   if (orderNotionalUsd < MIN_ORDER_NOTIONAL_USD) {
+    const closesWholePosition = input.reduceOnly === true && existingSigned !== 0 && Math.sign(existingSigned) !== orderSign && input.size >= Math.abs(existingSigned);
     warn({
       code: "BELOW_MIN_NOTIONAL",
-      severity: input.reduceOnly ? "warning" : "danger",
-      blocking: !input.reduceOnly,
-      message: `Order value $${round2(orderNotionalUsd)} is below the $${MIN_ORDER_NOTIONAL_USD} minimum.`,
-      data: { notionalUsd: orderNotionalUsd, minNotionalUsd: MIN_ORDER_NOTIONAL_USD },
+      severity: closesWholePosition ? "info" : "danger",
+      blocking: !closesWholePosition,
+      message: closesWholePosition
+        ? `Order value $${round2(orderNotionalUsd)} is below the $${MIN_ORDER_NOTIONAL_USD} minimum, which Hyperliquid allows for closing a whole position.`
+        : `Order value $${round2(orderNotionalUsd)} is below the $${MIN_ORDER_NOTIONAL_USD} minimum${input.reduceOnly ? "; only a close of the whole position may be smaller" : ""}.`,
+      data: { notionalUsd: orderNotionalUsd, minNotionalUsd: MIN_ORDER_NOTIONAL_USD, closesWholePosition },
     });
   }
 

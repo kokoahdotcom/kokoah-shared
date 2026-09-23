@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allowedPriceDecimalsAt,
+  checkMinOrderNotional,
   checkPrice,
   formatPrice,
   formatSize,
@@ -8,6 +9,7 @@ import {
   isValidSize,
   maxPriceDecimals,
   MIN_ORDER_NOTIONAL_USD,
+  minOrderSize,
   normalizeDecimal,
   PrecisionError,
   priceTickAt,
@@ -205,6 +207,36 @@ describe("validateOrderNotional ($10 minimum)", () => {
     expect(validateOrderNotional(3, 3.34).ok).toBe(true); // 10.02
     expect(validateOrderNotional(0.1, 100.0000001).ok).toBe(true);
     expect(validateOrderNotional("-0.001", "10000").ok).toBe(true); // absolute notional
+  });
+});
+
+describe("checkMinOrderNotional (HL: $10, except a reduce-only close of the whole position)", () => {
+  it("finds the smallest valid size", () => {
+    expect(minOrderSize("85500", 5)).toBe("0.00012"); // 0.00011 × 85500 = 9.405
+    expect(minOrderSize("10000", 3)).toBe("0.001"); // exactly $10
+    expect(minOrderSize("3.34", 0)).toBe("3");
+    expect(minOrderSize("0.5", 0)).toBe("20");
+  });
+
+  it("blocks new orders and partial closes below $10 with the valid size", () => {
+    const entry = checkMinOrderNotional({ size: "0.0001", price: "85500", szDecimals: 5, symbol: "BTC" });
+    expect(entry).toMatchObject({ ok: false, exempt: false, minSize: "0.00012" });
+    expect(entry.message).toBe("Order value $8.55 is below Hyperliquid's $10 minimum. Use at least 0.00012 BTC (about $10.26).");
+    // The testnet case: a reduce-only partial close worth $8.55 is rejected by HL.
+    const partial = checkMinOrderNotional({ size: "0.0001", price: "85500", szDecimals: 5, reduceOnly: true, positionSize: "0.0003", symbol: "BTC" });
+    expect(partial.ok).toBe(false);
+    expect(partial.message).toContain("Use at least 0.00012 BTC (about $10.26), or close the whole position.");
+    // The minimum is above the position: only a full close is possible.
+    const tiny = checkMinOrderNotional({ size: "0.0001", price: "85500", szDecimals: 5, reduceOnly: true, positionSize: "0.00011", symbol: "BTC" });
+    expect(tiny.message).toContain("Close the whole position (0.00011 BTC) instead");
+  });
+
+  it("allows a reduce-only close of the whole position below $10, and anything at or above $10", () => {
+    expect(checkMinOrderNotional({ size: "0.0001", price: "85500", szDecimals: 5, reduceOnly: true, positionSize: "0.0001" })).toMatchObject({ ok: true, exempt: true });
+    expect(checkMinOrderNotional({ size: "0.0001", price: "85500", szDecimals: 5, reduceOnly: true, positionSize: "-0.0001" }).ok).toBe(true);
+    // Not reduce-only: never exempt, even at the position size.
+    expect(checkMinOrderNotional({ size: "0.0001", price: "85500", szDecimals: 5, positionSize: "0.0001" }).ok).toBe(false);
+    expect(checkMinOrderNotional({ size: "0.00012", price: "85500", szDecimals: 5 })).toMatchObject({ ok: true, exempt: false, message: "" });
   });
 });
 

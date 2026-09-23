@@ -303,12 +303,17 @@ describe("assessOrderRisk", () => {
     expect(codes(r)).toEqual(expect.arrayContaining(["STOP_WRONG_SIDE", "TAKE_PROFIT_WRONG_SIDE"]));
   });
 
-  it("blocks orders below the $10 minimum (warning only for reduce-only)", () => {
+  it("blocks orders below the $10 minimum, except a reduce-only close of the whole position", () => {
     const r = assessOrderRisk({ ...base, size: 0.00005 });
     expect(codes(r)).toContain("BELOW_MIN_NOTIONAL");
     expect(r.blocking).toBe(true);
-    const ro = assessOrderRisk({ ...base, side: "sell", size: 0.00005, reduceOnly: true, stopLoss: undefined, existingPosition: { side: "long", size: 0.0001, entryPrice: 90_000 } });
-    expect(ro.warnings.find((w) => w.code === "BELOW_MIN_NOTIONAL")?.blocking).toBe(false);
+    // Reduce-only partial close below $10: Hyperliquid rejects it (seen on testnet), so it blocks.
+    const partial = assessOrderRisk({ ...base, side: "sell", size: 0.00005, reduceOnly: true, stopLoss: undefined, existingPosition: { side: "long", size: 0.0001, entryPrice: 90_000 } });
+    expect(partial.warnings.find((w) => w.code === "BELOW_MIN_NOTIONAL")?.blocking).toBe(true);
+    // Closing the whole (small) position is exempt.
+    const full = assessOrderRisk({ ...base, side: "sell", size: 0.00008, reduceOnly: true, stopLoss: undefined, existingPosition: { side: "long", size: 0.00008, entryPrice: 90_000 } });
+    expect(full.warnings.find((w) => w.code === "BELOW_MIN_NOTIONAL")).toMatchObject({ blocking: false, severity: "info" });
+    expect(full.blocking).toBe(false);
   });
 
   it("warns about a thin book and a shallow book for market orders", () => {

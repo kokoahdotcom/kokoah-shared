@@ -4,6 +4,25 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/)
 (pre-1.0: minor versions may break).
 
+## [0.1.3] - 2026-09-23
+
+### Changed
+- `evaluatePolicy`: the price band now depends on whether the order executes now or rests. Market orders, IOC and
+  marketable limits (a buy at or above min(mark, mid), a sell at or below max(mark, mid)) keep `priceBandPct`.
+  Resting, non-marketable GTC/ALO limits may sit up to the new `RESTING_PRICE_BAND_PCT` (50%) from mark (or
+  `priceBandPct` when wider), so "buy 20% below the market" is allowed while typos like 8500 for 85000 are still
+  refused. Trigger orders: limit within max(`priceBandPct`, 10%) of the trigger (unchanged), a trigger that would fire
+  now banded against mark at `priceBandPct` (unchanged), and **new**: an untriggered trigger must be within the
+  resting band of mark. Evaluator logic only; the signed policy type and digest are unchanged (golden test).
+- `PolicyContext.midPrices` (optional): the evaluator's own book mids, used to classify marketable limits.
+- `assessOrderRisk`: `BELOW_MIN_NOTIONAL` now blocks reduce-only partial closes too. Hyperliquid only exempts a
+  reduce-only order that closes the whole position (a funded testnet run saw a $8.55 partial close rejected).
+
+### Added
+- `policy`: `checkLimitPriceBand`, `checkTriggerPriceBand`, `triggerLimitBandProblem`, `isMarketableLimit`,
+  `isTriggerCrossed`, `restingPriceBandPct`, `RESTING_PRICE_BAND_PCT`, so UIs show the same rule while the user types.
+- `precision`: `minOrderSize(price, szDecimals)` and `checkMinOrderNotional(...)` with the valid size to suggest.
+
 ## [0.1.2] - 2026-09-22
 
 ### Fixed

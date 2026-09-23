@@ -1,3 +1,4 @@
+import { hashTypedData } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { compileAction } from "../src/actions/index.js";
@@ -150,7 +151,15 @@ describe("order limits", () => {
   });
 
   it("checks the price band vs mark and market-order slippage", () => {
-    expect(codes(evalIntent(entry({ price: "90000", stopLoss: { triggerPrice: "88000" } })))).toEqual(["PRICE_OUTSIDE_BAND"]);
+    // Marketable (a buy above mark) and IOC limits execute now: the policy band (3% here).
+    expect(codes(evalIntent(entry({ price: "110000", stopLoss: { triggerPrice: "98000" } })))).toEqual(["PRICE_OUTSIDE_BAND"]);
+    expect(codes(evalIntent(entry({ price: "90000", tif: "Ioc", stopLoss: { triggerPrice: "88000" } })))).toEqual(["PRICE_OUTSIDE_BAND"]);
+    // A resting GTC/ALO buy 10% below mark is fine; 60% below is not.
+    expect(evalIntent(entry({ price: "90000", stopLoss: { triggerPrice: "88000" } })).allowed).toBe(true);
+    expect(evalIntent(entry({ price: "90000", tif: "Alo", stopLoss: { triggerPrice: "88000" } })).allowed).toBe(true);
+    const typo = evalIntent(entry({ price: "40000", stopLoss: { triggerPrice: "38000" } }));
+    expect(new Set(codes(typo))).toEqual(new Set(["PRICE_OUTSIDE_BAND"])); // the limit and its 62%-away stop
+    expect(typo.violations[0]!.message).toContain("resting limits must be within 50%");
     const market = entry({ orderType: "market", price: undefined, slippageBps: 500 });
     expect(codes(evalIntent(market))).toEqual(["PRICE_OUTSIDE_BAND"]);
     expect(evalIntent(entry({ orderType: "market", price: undefined, slippageBps: 100 })).allowed).toBe(true);
@@ -190,7 +199,7 @@ describe("order limits", () => {
   });
 
   it("reports several violations at once", () => {
-    const d = evalIntent(entry({ size: "1", price: "90000", stopLoss: undefined }), { expiresAfter: undefined });
+    const d = evalIntent(entry({ size: "0.4", price: "130000", stopLoss: undefined }), { expiresAfter: undefined });
     expect(codes(d).sort()).toEqual(["EXPIRES_AFTER_REQUIRED", "ORDER_NOTIONAL_EXCEEDED", "PRICE_OUTSIDE_BAND", "STOP_LOSS_REQUIRED"].sort());
   });
 });
@@ -232,6 +241,21 @@ describe("compiled and wire actions", () => {
 describe("signed policies (EIP-712)", () => {
   const user = privateKeyToAccount(generatePrivateKey());
   const auth = { user: user.address, network: "Testnet" as const, chainId: 421614, issuedAt: NOW, expiresAt: NOW + 30 * 86_400_000, nonce: 1 };
+
+  it("golden: the signed policy type and digest are unchanged (existing signatures keep verifying)", () => {
+    // Pinned from 0.1.2. The resting price band is evaluator logic, not a signed field.
+    const manual = createManualTradingPolicy({ builder: BUILDER });
+    const td = buildPolicyTypedData(manual, {
+      user: "0x3333333333333333333333333333333333333333",
+      network: "Testnet",
+      chainId: 421614,
+      issuedAt: 1_790_000_000_000,
+      expiresAt: 1_790_000_000_000 + 86_400_000,
+      nonce: 7,
+    });
+    expect(hashPolicy(manual)).toBe("0xb4bb1459bcb66f6add58b01f7cf7ae6b74286fdfb0cbad7130cde014ed5ab776");
+    expect(hashTypedData(td)).toBe("0x5197cf8b93c93224ab4e6eecf7893290170734820594bcacee0b67733e4a189c");
+  });
 
   it("hash is stable under list reordering and changes with any field", () => {
     const shuffled = { ...policy, allowedCoins: ["xyz:SP500", "ETH", "BTC"], allowedActionTypes: [...policy.allowedActionTypes].reverse() };
@@ -361,8 +385,10 @@ describe("regressions from the security review", () => {
       builder: { b: BUILDER.b, f: BUILDER.f },
     });
     expect(codes(evaluatePolicy(tiny, ctx()))).toContain("STOP_LOSS_REQUIRED");
-    const farButFull = entry({ stopLoss: { triggerPrice: "1" } });
-    expect(evalIntent(farButFull).allowed).toBe(true); // no distance limit in this policy
+    const farButFull = entry({ stopLoss: { triggerPrice: "55000" } });
+    expect(evalIntent(farButFull).allowed).toBe(true); // no distance limit in this policy (45% is inside the resting band)
+    // A stop 99.999% away is a typo: the resting trigger band refuses it.
+    expect(codes(evalIntent(entry({ stopLoss: { triggerPrice: "1" } })))).toEqual(["PRICE_OUTSIDE_BAND"]);
     expect(codes(evalIntent(farButFull, { policy: { ...policy, maxStopLossDistancePct: 10 } }))).toContain("STOP_LOSS_REQUIRED");
     expect(evalIntent(entry(), { policy: { ...policy, maxStopLossDistancePct: 10 } }).allowed).toBe(true); // 2% away
   });

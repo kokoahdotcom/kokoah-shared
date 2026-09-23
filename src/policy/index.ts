@@ -7,6 +7,7 @@
  */
 export * from "./types.js";
 export * from "./schema.js";
+export * from "./band.js";
 export * from "./evaluate.js";
 export * from "./signature.js";
 export * from "./presets.js";

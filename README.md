@@ -133,6 +133,8 @@ bad name.
 `formatPrice(price, szDecimals, kind)`, `roundPriceToTick(price, szDecimals, kind, "nearest" | "up" | "down")`,
 `isValidPrice`, `checkPrice` (reason + suggestion), `priceTickAt`, `maxPriceDecimals`, `formatSize(size, szDecimals,
 direction = "down")`, `isValidSize`, `sizeStep`, `validateOrderNotional(size, price)`, `MIN_ORDER_NOTIONAL_USD` (10),
+`minOrderSize(price, szDecimals)`, `checkMinOrderNotional({ size, price, szDecimals, reduceOnly, positionSize })` (HL's
+rule: $10 minimum, except a reduce-only order that closes the whole position; returns the valid size to suggest),
 `normalizeDecimal`. Exact BigInt decimal arithmetic; numbers are first reduced to 15 significant digits.
 
 ```ts
@@ -256,8 +258,15 @@ wire actions (non-string or non-positive sizes/prices, wrong types, unknown keys
 Other rules:
 - Reduce-only orders are exempt from notional caps by default (`exemptReduceOnlyFromNotionalCaps`) so protection and
   closes always work. Cancels are exempt from notional caps and the per-minute count, but not from `allowedCoins`.
-- Trigger orders are valued at `max(limit, trigger, mark)`; a trigger that would already fire at the current mark is
-  price-banded against mark like a normal order.
+- Price bands (`policy/band.ts`, also exported for UIs: `checkLimitPriceBand`, `checkTriggerPriceBand`): orders that
+  execute now (market, IOC, and marketable limits: a buy at or above min(mark, mid), a sell at or below max(mark,
+  mid)) must be within `priceBandPct` of mark. Resting, non-marketable GTC/ALO limits may sit up to
+  `RESTING_PRICE_BAND_PCT` (50%) from mark, or `priceBandPct` if wider; this stops typos like 8500 for 85000. The mid is
+  optional (`context.midPrices`) and must come from the evaluator's own market data. Not a signed field: signed
+  policies are unchanged.
+- Trigger orders are valued at `max(limit, trigger, mark)`. Their limit must be within max(`priceBandPct`, 10%) of the
+  trigger; a trigger that has not fired yet may sit up to the resting band from mark; a trigger that would already
+  fire at the current mark is price-banded against mark like an order that executes now.
 - `requireStopLossForNewEntries`: an entry needs an attached stop covering its full size on the losing side (and within
   `maxStopLossDistancePct` of the entry, when set), or an existing exchange stop (`context.hasStopLoss`). Modifies of
   non-reduce-only orders need an existing stop, and are blocked by the daily loss lock like new entries.
@@ -431,7 +440,7 @@ type Policy = {
   requireStopLossForNewEntries: boolean;
   maxOrdersPerMinute: number;
   maxStopLossDistancePct?: number;                   // attached stop within X% of entry (optional)
-  priceBandPct: number;                              // limit price vs mark
+  priceBandPct: number;                              // orders that execute now vs mark (resting limits: 50%)
   allowedVaultAddresses: `0x${string}`[];            // [] = master account only
   requiredBuilder: { b: `0x${string}`; f: number } | null;
   maxExpiresAfterWindowMs: number | null;            // non-null ⇒ expiresAfter required and ≤ now + window
@@ -448,6 +457,7 @@ interface PolicyContext {
   registry?: MarketRegistry;          // required for wire/compiled subjects
   policyExpiresAt?: number; expiresAfter?: number; hasStopLoss?: (coin: string) => boolean;
   leverageByCoin?: Record<string, number>; lossLockActive?: boolean;
+  midPrices?: Record<string, number>; // evaluator's own book mids: refines which limits are marketable
 }
 
 function buildPolicyTypedData(policy: PolicyInput | Policy, auth: { user; agent?; network: "Mainnet" | "Testnet"; chainId; issuedAt; expiresAt; nonce });

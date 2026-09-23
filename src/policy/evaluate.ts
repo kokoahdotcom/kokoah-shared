@@ -4,7 +4,8 @@
  *    config, TWAP) are denied with a specific code even if a policy lists them;
  * 2. anything not in the policy's allow-list is denied;
  * 3. per-action limits: coins, notional, daily notional, leverage, stop-loss requirement, orders per minute,
- *    price band vs mark, vault addresses, required builder, `expiresAfter` window, origin, daily loss lock.
+ *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
+ *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock.
  *
  * Research basis: agents can sign `vaultTransfer`, `createVault` (10k USDC fee), `createSubAccount`, … (research B
  * §1.7, §1.8), so the signer must decode and check the structured action before hashing.
@@ -14,7 +15,7 @@
 import type { CompiledAction } from "../actions/compile.js";
 import type { ActionIntent, IntentOrigin } from "../intents/index.js";
 import type { MarketRegistry } from "../markets/registry.js";
-import { MARKET_TRIGGER_MAX_SLIPPAGE_PCT } from "../risk/formulas.js";
+import { checkLimitPriceBand, checkTriggerPriceBand, type LimitTif, triggerLimitBandProblem } from "./band.js";
 import type { Policy } from "./schema.js";
 import { DENIED_ACTION_TYPES, DENIED_MESSAGES, type PolicyViolationCode } from "./types.js";
 import { isAddress, wireActionProblems } from "./wire.js";
@@ -59,6 +60,11 @@ export interface PolicyContext {
   now: number;
   /** Mark price by coin. Needed for price bands and the notional of market intents. */
   markPrices: Readonly<Record<string, number>>;
+  /**
+   * Book mid by coin, when the evaluator fetched it itself (never from an untrusted caller). Optional: it only
+   * refines which limits count as marketable (see `band.ts`).
+   */
+  midPrices?: Readonly<Record<string, number>>;
   /** Notional already used today (USD), not counting this action. */
   dailyNotionalUsedUsd: number;
   /** Orders placed in the last 60 s, not counting this action. */
@@ -89,6 +95,8 @@ interface OrderLeg {
   reduceOnly: boolean;
   /** Market intents: slippage in bps. */
   slippageBps?: number;
+  /** Limit orders: time in force (intents default to GTC). */
+  tif?: LimitTif;
 }
 
 type AddFn = (code: PolicyViolationCode, message: string) => void;
@@ -217,13 +225,6 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
   return { allowed: violations.length === 0, violations, actionType };
 }
 
-/** True when a trigger order would fire at the current mark (HL: stop-buy ≥, stop-sell ≤, tp-buy ≤, tp-sell ≥). */
-function triggerCrossed(leg: OrderLeg, mark: number): boolean {
-  const t = leg.triggerPrice as number;
-  if (leg.tpsl === "sl") return leg.isBuy ? mark >= t : mark <= t;
-  return leg.isBuy ? mark <= t : mark >= t;
-}
-
 function checkOrderLegs(legs: OrderLeg[], actionType: string, wire: Wire | undefined, context: PolicyContext, coinAllowed: (coin: string) => boolean, add: AddFn): void {
   const policy = context.policy;
   const exempt = policy.exemptReduceOnlyFromNotionalCaps;
@@ -257,7 +258,8 @@ function checkOrderLegs(legs: OrderLeg[], actionType: string, wire: Wire | undef
         add("ORDER_NOTIONAL_EXCEEDED", `Order notional $${fmt(notionalUsd)} is above the $${fmt(policy.maxOrderNotionalUsd)} limit.`);
       }
     }
-    // Price band.
+    // Price band (see band.ts): orders that execute now within `priceBandPct` of mark; resting limits and untriggered
+    // triggers within the wider resting band.
     if (!leg.isTrigger) {
       if (leg.price === undefined) {
         const slipPct = (leg.slippageBps ?? 0) / 100;
@@ -265,24 +267,34 @@ function checkOrderLegs(legs: OrderLeg[], actionType: string, wire: Wire | undef
       } else if (mark === undefined) {
         add("MARK_PRICE_UNAVAILABLE", `No mark price for ${leg.coin}.`);
       } else {
-        const off = (Math.abs(leg.price - mark) / mark) * 100;
-        if (!(off <= band + 1e-9)) add("PRICE_OUTSIDE_BAND", `${leg.coin} price ${leg.price} is ${fmt(off)}% from mark ${mark} (band ${band}%).`);
+        const rawMid = context.midPrices?.[leg.coin];
+        const check = checkLimitPriceBand({
+          isBuy: leg.isBuy,
+          price: leg.price,
+          mark,
+          mid: typeof rawMid === "number" && Number.isFinite(rawMid) && rawMid > 0 ? rawMid : undefined,
+          tif: leg.tif,
+          bandPct: band,
+          label: leg.coin,
+        });
+        if (!check.ok) add("PRICE_OUTSIDE_BAND", check.message);
       }
+    } else if (mark === undefined) {
+      // The limit-vs-trigger part needs no mark; check it before reporting the missing mark.
+      const problem = triggerLimitBandProblem({ triggerPrice: leg.triggerPrice as number, limitPrice: leg.price, bandPct: band, label: leg.coin });
+      if (problem) add("PRICE_OUTSIDE_BAND", problem);
+      add("MARK_PRICE_UNAVAILABLE", `No mark price for ${leg.coin}.`);
     } else {
-      const trigger = leg.triggerPrice as number;
-      const limit = leg.price ?? trigger;
-      const triggerBand = Math.max(band, MARKET_TRIGGER_MAX_SLIPPAGE_PCT);
-      const offTrigger = (Math.abs(limit - trigger) / trigger) * 100;
-      if (!(offTrigger <= triggerBand + 1e-9)) add("PRICE_OUTSIDE_BAND", `${leg.coin} trigger limit price is ${fmt(offTrigger)}% from its trigger (max ${triggerBand}%).`);
-      if (mark === undefined) {
-        add("MARK_PRICE_UNAVAILABLE", `No mark price for ${leg.coin}.`);
-      } else if (triggerCrossed(leg, mark)) {
-        // Already past its trigger: it executes immediately, so it is priced like a normal order.
-        const off = (Math.abs(limit - mark) / mark) * 100;
-        if (!(off <= band + 1e-9)) {
-          add("PRICE_OUTSIDE_BAND", `${leg.coin} trigger at ${trigger} would fire immediately at mark ${mark}; its limit ${limit} is ${fmt(off)}% from mark (band ${band}%).`);
-        }
-      }
+      const check = checkTriggerPriceBand({
+        isBuy: leg.isBuy,
+        tpsl: leg.tpsl ?? "sl",
+        triggerPrice: leg.triggerPrice as number,
+        limitPrice: leg.price,
+        mark,
+        bandPct: band,
+        label: leg.coin,
+      });
+      for (const p of check.problems) add("PRICE_OUTSIDE_BAND", p);
     }
     // Leverage of the market, when known.
     const lev = context.leverageByCoin?.[leg.coin];
@@ -376,8 +388,9 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
     const raw: unknown[] =
       wire.type === "order" ? (wire.orders as unknown[]) : wire.type === "modify" ? [wire.order] : (wire.modifies as Array<{ order: unknown }>).map((m) => m.order);
     return raw.map((o) => {
-      const w = o as { a: number; b: boolean; p: string; s: string; r: boolean; t: { trigger?: { triggerPx: string; tpsl: "tp" | "sl" } } };
+      const w = o as { a: number; b: boolean; p: string; s: string; r: boolean; t: { limit?: { tif: LimitTif }; trigger?: { triggerPx: string; tpsl: "tp" | "sl" } } };
       const trig = w.t.trigger;
+      const tif = w.t.limit?.tif;
       return {
         coin: resolveCoin(w.a, context, add),
         isBuy: w.b,
@@ -386,6 +399,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         triggerPrice: trig ? Number(trig.triggerPx) : undefined,
         isTrigger: trig !== undefined,
         ...(trig ? { tpsl: trig.tpsl } : {}),
+        ...(tif !== undefined ? { tif } : {}),
         reduceOnly: w.r,
       };
     });
@@ -404,6 +418,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
       ...(isTrigger ? { tpsl: tpslOf(intent.orderType) } : {}),
       reduceOnly: intent.reduceOnly,
       ...(intent.orderType === "market" ? { slippageBps: intent.slippageBps ?? 100 } : {}),
+      ...(intent.orderType === "limit" ? { tif: intent.tif ?? "Gtc" } : {}),
     };
     const legs: OrderLeg[] = [parent];
     const attached = [
@@ -436,7 +451,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         price: o.price !== undefined ? Number(o.price) : o.triggerPrice !== undefined ? Number(o.triggerPrice) : undefined,
         triggerPrice: o.triggerPrice !== undefined ? Number(o.triggerPrice) : undefined,
         isTrigger,
-        ...(isTrigger ? { tpsl: tpslOf(o.orderType) } : {}),
+        ...(isTrigger ? { tpsl: tpslOf(o.orderType) } : { tif: o.tif ?? "Gtc" }),
         reduceOnly: o.reduceOnly,
       },
     ];
