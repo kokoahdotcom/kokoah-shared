@@ -339,3 +339,72 @@ describe("trailing helpers", () => {
     expect(trailProblems({ side: "short", mark: 100, distance: { kind: "pct", value: 3 }, activationPrice: 99 })).toEqual([]);
   });
 });
+
+describe("trailing stop guardian (server execution)", () => {
+  const pos = (side: "long" | "short", size = 2): GuardianPosition => ({ side, size, entryPrice: 100, liquidationPrice: null, marginMode: "cross" });
+  const ps = (positions: Record<string, GuardianPosition>, orders: PositionState["orders"] = []): PositionState => ({ account: { equityUsd: 10_000 }, positions, orders });
+  const mk = (markPrice: number): MarketState => ({ SOL: { markPrice, szDecimals: 2 } });
+  const trail = (extra: Record<string, unknown> = {}) =>
+    parseEngineRule({ id: "tr-1", type: "trailingStop", createdAt: NOW, coin: "SOL", trail: { kind: "pct", value: 3 }, ...extra }) as Extract<ReturnType<typeof parseEngineRule>, { type: "trailingStop" }>;
+  const step = (rule: ReturnType<typeof trail>, mark: number, orders: PositionState["orders"] = [], positions = { SOL: pos("long") }) => {
+    const ev = evaluateEngineRule(rule, mk(mark), ps(positions, orders), NOW);
+    return { ev, next: { ...rule, state: ev.nextState, status: ev.status } as ReturnType<typeof trail> };
+  };
+  it("places the first stop a % behind the mark", () => {
+    const { ev } = step(trail(), 100);
+    expect(ev.intents).toHaveLength(1);
+    expect(ev.intents[0]).toMatchObject({ kind: "order", orderType: "stopMarket", side: "sell", triggerPrice: "97", reduceOnly: true, positionTpsl: true });
+    expect(ev.requires).toEqual({});
+    expect(ev.cleanup).toEqual([]);
+  });
+  it("uses a $ distance and waits for the activation price", () => {
+    const usd = trail({ trail: { kind: "price", value: "2.5" }, activationPrice: "105" });
+    expect(step(usd, 100).ev.intents).toHaveLength(0);
+    expect(step(usd, 100).ev.reason).toMatch(/activation/);
+    const { ev } = step(usd, 106);
+    expect(ev.intents[0]).toMatchObject({ triggerPrice: "103.5" });
+  });
+  it("moves the stop by placing the new one, then canceling the old one, and never loosens", () => {
+    const first = step(trail(), 100);
+    const ownCloid = (first.ev.intents[0] as { cloid: string }).cloid;
+    const open = [{ coin: "SOL", cloid: ownCloid, side: "sell" as const, status: "open" as const, origSize: 2, filledSize: 0, triggerPrice: 97 }];
+    // The price falls: the stop stays.
+    expect(step(first.next, 98, open).ev.intents).toHaveLength(0);
+    // The price rises: a new stop, then the cancel of the old one, which depends on it and may fail harmlessly.
+    const up = step(first.next, 110, open);
+    expect(up.ev.intents.map((i) => i.kind)).toEqual(["order", "cancel"]);
+    expect(up.ev.intents[0]).toMatchObject({ orderType: "stopMarket", triggerPrice: "106.7", positionTpsl: true, reduceOnly: true });
+    expect(up.ev.intents[1]).toMatchObject({ cancels: [{ coin: "SOL", cloid: ownCloid }] });
+    expect(up.ev.requires).toEqual({ "1": 0 });
+    expect(up.ev.cleanup).toEqual([1]);
+    expect(up.ev.intents.some((i) => i.kind === "modify")).toBe(false);
+    // Back down: never loosens.
+    const newCloid = (up.ev.intents[0] as { cloid: string }).cloid;
+    expect(step(up.next, 104, [{ ...open[0]!, cloid: newCloid, triggerPrice: 106.7 }]).ev.intents).toHaveLength(0);
+  });
+  it("manages an existing exchange stop without loosening it", () => {
+    const external = [{ coin: "SOL", oid: 42, side: "sell" as const, status: "open" as const, origSize: 2, filledSize: 0, triggerPrice: 98 }];
+    const rule = trail({ stopOrder: { oid: 42 } });
+    // 3% behind 100 is 97, looser than the 98 stop: nothing moves.
+    expect(step(rule, 100, external).ev.intents).toHaveLength(0);
+    const up = step(rule, 105, external);
+    expect(up.ev.intents.map((i) => i.kind)).toEqual(["order", "cancel"]);
+    expect(up.ev.intents[1]).toMatchObject({ cancels: [{ coin: "SOL", oid: 42 }] });
+  });
+  it("puts a canceled stop back, never looser than before", () => {
+    const first = step(trail(), 110);
+    const ownCloid = (first.ev.intents[0] as { cloid: string }).cloid;
+    const canceled = [{ coin: "SOL", cloid: ownCloid, side: "sell" as const, status: "canceled" as const, origSize: 2, filledSize: 0, triggerPrice: 106.7 }];
+    const restored = step(first.next, 108, canceled);
+    expect(restored.ev.intents).toHaveLength(1);
+    expect(restored.ev.intents[0]).toMatchObject({ kind: "order", triggerPrice: "106.7" });
+    expect(restored.ev.reason).toMatch(/was canceled/);
+    expect((restored.ev.intents[0] as { cloid: string }).cloid).not.toBe(ownCloid);
+    // A filled or triggered stop is not replaced.
+    expect(step(first.next, 108, [{ ...canceled[0]!, status: "triggered" }]).ev.intents).toHaveLength(0);
+  });
+  it("shorts trail above the price", () => {
+    const { ev } = step(trail(), 100, [], { SOL: pos("short") });
+    expect(ev.intents[0]).toMatchObject({ side: "buy", triggerPrice: "103" });
+  });
+});

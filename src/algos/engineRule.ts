@@ -7,6 +7,7 @@
  */
 import { evaluateRule, type GuardianEvaluation, type MarketState, type PositionState } from "../guardians/evaluate.js";
 import { parseGuardianRule, type GuardianRule } from "../guardians/schemas.js";
+import { evaluateTrailingStop, type ExecutionPlan } from "./trailing.js";
 import { evaluateTwapRule, parseTwapRule, type TwapEvaluation, type TwapRule } from "./twapRule.js";
 
 /** Algo rule types the guardian engine runs. */
@@ -15,8 +16,8 @@ export type AlgoRuleType = (typeof ALGO_RULE_TYPES)[number];
 
 /** Any rule the guardian engine runs. */
 export type EngineRule = GuardianRule | TwapRule;
-/** Evaluation of any engine rule. */
-export type EngineEvaluation = GuardianEvaluation | TwapEvaluation;
+/** Evaluation of any engine rule. `requires` and `cleanup` (see `ExecutionPlan`) say how to send the intents. */
+export type EngineEvaluation = (GuardianEvaluation | TwapEvaluation) & Partial<Pick<ExecutionPlan, "requires" | "cleanup">>;
 
 /** True for algo rules (listed apart from guardians in the app). */
 export function isAlgoRule(rule: { type: string }): rule is TwapRule {
@@ -29,7 +30,12 @@ export function parseEngineRule(input: unknown): EngineRule {
   return type === "twap" ? parseTwapRule(input) : parseGuardianRule(input);
 }
 
-/** Evaluates a guardian or algo rule (pure; see `evaluateRule` and `evaluateTwapRule`). */
+/**
+ * Evaluates a guardian or algo rule (pure). TWAPs use `evaluateTwapRule`, trailing stops `evaluateTrailingStop`
+ * (place-then-cancel moves and a restored stop), every other guardian `evaluateRule`.
+ */
 export function evaluateEngineRule(rule: EngineRule, market: MarketState, positions: PositionState, now: number): EngineEvaluation {
-  return rule.type === "twap" ? evaluateTwapRule(rule, market, positions, now) : evaluateRule(rule, market, positions, now);
+  if (rule.type === "twap") return evaluateTwapRule(rule, market, positions, now);
+  if (rule.type === "trailingStop") return evaluateTrailingStop(rule, market, positions, now);
+  return evaluateRule(rule, market, positions, now);
 }
