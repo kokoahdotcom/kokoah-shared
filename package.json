@@ -77,6 +77,11 @@
       "import": "./dist/link/index.js",
       "default": "./dist/link/index.js"
     },
+    "./subaccounts": {
+      "types": "./dist/subaccounts/index.d.ts",
+      "import": "./dist/subaccounts/index.js",
+      "default": "./dist/subaccounts/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
