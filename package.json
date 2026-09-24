@@ -67,6 +67,11 @@
       "import": "./dist/guardians/index.js",
       "default": "./dist/guardians/index.js"
     },
+    "./algos": {
+      "types": "./dist/algos/index.d.ts",
+      "import": "./dist/algos/index.js",
+      "default": "./dist/algos/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
