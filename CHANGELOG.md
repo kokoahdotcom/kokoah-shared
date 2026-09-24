@@ -12,7 +12,8 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   `AccountMode`), both checked against new Python SDK golden vectors.
 - `link` (new subpath `@kokoah/shared/link`): `deviceLinkCode`, the 6-digit matching code for linking a phone (HMAC-SHA256
   keyed with the QR code's link secret over pairing id, account, agent address, agent name and expiry), plus
-  `generateLinkSecret`, `formatLinkCode`, `deviceLinkCodeMessage`, `hmacSha256` and base64url helpers.
+  `generateLinkSecret`, `formatLinkCode`, `deviceLinkCodeMessage`, `hmacSha256`, `sha256Bytes` and base64url helpers
+  (dependency-free).
 
 - `subaccounts` (new subpath `@kokoah/shared/subaccounts`): `parseSubAccounts` (HL `subAccounts` answer → the
   master's sub-accounts, failing closed on anything malformed or of another master), `SubAccountOwnership` (cached,

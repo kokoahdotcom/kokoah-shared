@@ -309,7 +309,8 @@ Device linking ("Link phone"): `deviceLinkCode({ secret, pairingId, userAddress,
 validUntil })` is the 6-digit matching code both the computer and the phone show before the main wallet approves the
 phone's own agent key. It is HMAC-SHA256 keyed with the link secret (16 random bytes from the QR code's URL fragment,
 never sent to a server) over those fields, so a relay that swaps the agent address produces a different code. Also
-`generateLinkSecret`, `formatLinkCode` ("482 913"), `deviceLinkCodeMessage`, `hmacSha256` and base64url helpers.
+`generateLinkSecret`, `formatLinkCode` ("482 913"), `deviceLinkCodeMessage`, `hmacSha256`, `sha256Bytes` and base64url
+helpers. Dependency-free (its own SHA-256, checked against node:crypto), so importing it adds no hashing library.
 Subpath export only (`@kokoah/shared/link`), not re-exported from the root.
 
 ### `subaccounts`

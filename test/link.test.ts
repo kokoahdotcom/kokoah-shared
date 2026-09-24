@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   base64UrlToBytes,
@@ -9,6 +9,7 @@ import {
   generateLinkSecret,
   hmacSha256,
   LINK_SECRET_PATTERN,
+  sha256Bytes,
 } from "../src/link/index.js";
 
 const input = {
@@ -19,6 +20,16 @@ const input = {
   agentName: "kokoah-ab12",
   validUntil: 1_790_000_000_000,
 };
+
+describe("sha256Bytes", () => {
+  it("matches node:crypto at every padding boundary and for long input", () => {
+    for (const n of [0, 1, 55, 56, 57, 63, 64, 65, 119, 120, 128, 1000, 70_000]) {
+      const data = randomBytes(n);
+      expect(Buffer.from(sha256Bytes(data)).equals(createHash("sha256").update(data).digest()), `length ${n}`).toBe(true);
+    }
+    expect(Buffer.from(sha256Bytes(new TextEncoder().encode("abc"))).toString("hex")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  });
+});
 
 describe("hmacSha256", () => {
   it("matches node:crypto for short, block-sized and long keys", () => {
