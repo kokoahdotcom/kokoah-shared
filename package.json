@@ -81,7 +81,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.spikes.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.spikes.json --noEmit && vitest run && tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@nktkas/hyperliquid": "0.33.3",
