@@ -168,6 +168,11 @@ export const TrailingStopRuleSchema = v.strictObject({
   /** Minimum improvement (bps of the current stop) before modifying the exchange stop. Default 10. */
   minUpdateBps: v.optional(Bps, 10),
   /**
+   * Attached to the position that exists when the rule is created: the rule completes when that position closes,
+   * even before it activated, so it never acts on a later position. Without it, the rule waits for a position.
+   */
+  closeWithPosition: v.optional(v.boolean(), false),
+  /**
    * Existing exchange stop to manage. The trail starts from its trigger price and never loosens it (its
    * `triggerPrice` must be present in `PositionState.orders`). When absent or not open, the rule places its own stop.
    */

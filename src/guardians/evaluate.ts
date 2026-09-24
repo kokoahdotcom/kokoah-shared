@@ -430,7 +430,9 @@ function evalTrailingStop(rule: TrailingStopRule, market: MarketState, ps: Posit
   const pos = ps.positions[rule.coin];
   const m = market[rule.coin];
   if (!pos || pos.size <= 0) {
-    return st.activated ? result(e, st, "completed", "Position closed") : result(e, st, "armed", "Waiting for a position");
+    return st.activated || rule.closeWithPosition
+      ? result(e, st, "completed", "Position closed")
+      : result(e, st, "armed", "Waiting for a position");
   }
   if (st.activated && st.side !== undefined && st.side !== pos.side) return result(e, st, "completed", "The position changed side; the trail no longer applies");
   if (!m) return result(e, st, st.activated ? "triggered" : "armed", "No market data");

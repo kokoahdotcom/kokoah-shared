@@ -156,6 +156,17 @@ describe("trailing stop", () => {
     expect(r.state).toMatchObject({ stopPrice: "104.5", extreme: 110 });
   });
 
+  it("completes when its position closes before it activated, if attached to that position", () => {
+    const base = { type: "trailingStop", createdAt: NOW, coin: "SOL", trail: { kind: "pct", value: 3 }, activationPrice: "150" } as const;
+    const attached = parseGuardianRule({ ...base, id: "ts-att", closeWithPosition: true });
+    const waiting = parseGuardianRule({ ...base, id: "ts-wait" });
+    // Not activated yet (mark below the activation price) while the position is open.
+    expect(evaluateRule(attached, market("SOL", 100), state({ SOL: long(1, 100) }), NOW).status).toBe("armed");
+    // The position closed: an attached trail ends; a free-standing one keeps waiting for a position.
+    expect(evaluateRule(attached, market("SOL", 100), state({}), NOW)).toMatchObject({ status: "completed", fire: false });
+    expect(evaluateRule(waiting, market("SOL", 100), state({}), NOW).status).toBe("armed");
+  });
+
   it("never loosens the stop on a random walk (long and short)", () => {
     for (const side of ["long", "short"] as const) {
       const rnd = prng(side === "long" ? 1 : 2);
