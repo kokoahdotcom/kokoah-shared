@@ -4,6 +4,13 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/)
 (pre-1.0: minor versions may break).
 
+## [Unreleased]
+
+### Added
+- `signing`: `buildSendAsset` (readable `HyperliquidTransaction:SendAsset` for the main wallet; `fromSubAccount` is
+  always the main account) and `buildAccountMode` (`userSetAbstraction`, Standard or Unified; `ACCOUNT_MODES`,
+  `AccountMode`), both checked against new Python SDK golden vectors.
+
 ## [0.1.3] - 2026-09-23
 
 ### Changed

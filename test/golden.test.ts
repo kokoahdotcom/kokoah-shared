@@ -7,8 +7,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import {
   type ActionIntentInput,
+  buildAccountMode,
   buildApproveAgent,
   buildApproveBuilderFee,
+  buildSendAsset,
   buildWithdraw,
   compileAction,
   getNetworkConfig,
@@ -22,7 +24,7 @@ import {
   signUserSignedAction,
   type PreparedUserSignedAction,
 } from "../src/index.js";
-import { ApproveAgentTypes, ApproveBuilderFeeTypes, Withdraw3Types } from "@nktkas/hyperliquid/api/exchange";
+import { ApproveAgentTypes, ApproveBuilderFeeTypes, SendAssetTypes, UserSetAbstractionTypes, Withdraw3Types } from "@nktkas/hyperliquid/api/exchange";
 
 interface Vector {
   name: string;
@@ -69,7 +71,8 @@ describe("golden vectors file", () => {
   it("was produced by the Python SDK and covers L1 and user-signed actions", () => {
     expect(file.pythonSdkVersion).toBe("0.24.0");
     expect(vectors.filter((v) => v.kind === "l1").length).toBeGreaterThanOrEqual(15);
-    expect(vectors.filter((v) => v.kind === "userSigned").length).toBeGreaterThanOrEqual(6);
+    expect(vectors.filter((v) => v.kind === "userSigned").length).toBeGreaterThanOrEqual(10);
+    for (const type of ["sendAsset", "userSetAbstraction"]) expect(vectors.some((v) => v.action.type === type)).toBe(true);
   });
 });
 
@@ -250,6 +253,31 @@ describe("user-signed signatures match the Python SDK", () => {
         return {
           prepared: buildWithdraw({ destination: a.destination as `0x${string}`, amount: String(a.amount), nonce: v.nonce, network, signatureChainId }),
           types: Withdraw3Types,
+        };
+      case "sendAsset":
+        return {
+          prepared: buildSendAsset({
+            destination: a.destination as `0x${string}`,
+            sourceDex: String(a.sourceDex),
+            destinationDex: String(a.destinationDex),
+            token: String(a.token),
+            amount: String(a.amount),
+            nonce: v.nonce,
+            network,
+            signatureChainId,
+          }),
+          types: SendAssetTypes,
+        };
+      case "userSetAbstraction":
+        return {
+          prepared: buildAccountMode({
+            user: a.user as `0x${string}`,
+            abstraction: a.abstraction as "disabled" | "unifiedAccount",
+            nonce: v.nonce,
+            network,
+            signatureChainId,
+          }),
+          types: UserSetAbstractionTypes,
         };
       default:
         throw new Error(`unexpected ${String(a.type)}`);

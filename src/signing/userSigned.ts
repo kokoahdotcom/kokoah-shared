@@ -9,7 +9,7 @@
  *
  * The builders here return both the **typed data** (for `walletClient.signTypedData` / wagmi `useSignTypedData`) and
  * the **action** to post, derived from one set of inputs so they cannot drift apart. Types come from the SDK
- * (`ApproveAgentTypes`, `ApproveBuilderFeeTypes`, `Withdraw3Types`).
+ * (`ApproveAgentTypes`, `ApproveBuilderFeeTypes`, `Withdraw3Types`, `SendAssetTypes`, `UserSetAbstractionTypes`).
  *
  * @module
  */
@@ -18,6 +18,10 @@ import {
   ApproveAgentTypes,
   ApproveBuilderFeeRequest,
   ApproveBuilderFeeTypes,
+  SendAssetRequest,
+  SendAssetTypes,
+  UserSetAbstractionRequest,
+  UserSetAbstractionTypes,
   Withdraw3Request,
   Withdraw3Types,
 } from "@nktkas/hyperliquid/api/exchange";
@@ -25,7 +29,7 @@ import { type AbstractWallet, canonicalize, type Signature, signUserSignedAction
 import * as v from "valibot";
 import { hashTypedData, recoverTypedDataAddress } from "viem";
 import type { NetworkConfig } from "../network/index.js";
-import { normalizeDecimal } from "../precision/index.js";
+import { normalizeDecimal, toNumber } from "../precision/index.js";
 import { MAX_PERP_BUILDER_FEE_TENTHS_BPS, tenthsBpsToPercentString } from "../risk/formulas.js";
 import { signatureToHex, ZERO_ADDRESS } from "./l1.js";
 
@@ -234,6 +238,98 @@ export function buildWithdraw(params: {
     Withdraw3Request.entries.action,
     Withdraw3Types,
     { type: "withdraw3", destination: params.destination.toLowerCase(), amount: normalizeDecimal(params.amount), time: params.nonce },
+    params,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// sendAsset
+// ---------------------------------------------------------------------------------------------
+
+/** A perp dex name ("" = the first USDC perp dex), or "spot". HIP-3 dex names are short lowercase words. */
+const DEX_NAME = /^(spot|[a-z0-9]{0,16})$/;
+/** `tokenName:tokenId` as `sendAsset` expects it, e.g. "USDC:0x6d1e7cde53ba9467b783cb7c530ce054". */
+const TOKEN_SPEC = /^([A-Za-z0-9]{1,20}):(0x[0-9a-fA-F]{32})$/;
+
+/** Parameters for {@link buildSendAsset}. */
+export interface SendAssetParams {
+  /** The recipient's HyperCore address. */
+  destination: `0x${string}`;
+  /** Where the funds come from: "" (the first perp dex), a HIP-3 dex name, or "spot". */
+  sourceDex: string;
+  /** Where the recipient gets them: "" (the first perp dex), a HIP-3 dex name, or "spot". */
+  destinationDex: string;
+  /** `tokenName:tokenId` from `spotMeta` (e.g. "USDC:0x6d1e7cde53ba9467b783cb7c530ce054"). */
+  token: string;
+  /** Amount in token units (not wei); normalized, e.g. "25.50" → "25.5". Must be above zero. */
+  amount: string | number;
+  nonce: number;
+  network: UserSignedNetwork;
+  signatureChainId?: `0x${string}`;
+}
+
+/**
+ * Builds `sendAsset` (HyperCore transfer to another address, `HyperliquidTransaction:SendAsset`) for the main wallet.
+ * Every signed field is a readable string: destination, source and destination balance, token, amount.
+ * `fromSubAccount` is always "" (the main account): Kokoah does not move sub-account funds. Refuses the zero address.
+ */
+export function buildSendAsset(params: SendAssetParams): PreparedUserSignedAction {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(params.destination)) throw new RangeError("destination must be a 20-byte hex address");
+  if (params.destination.toLowerCase() === ZERO_ADDRESS) throw new RangeError("destination must not be the zero address");
+  for (const [name, dex] of [
+    ["sourceDex", params.sourceDex],
+    ["destinationDex", params.destinationDex],
+  ] as const) {
+    if (!DEX_NAME.test(dex)) throw new RangeError(`${name} must be "", "spot" or a perp dex name`);
+  }
+  const token = TOKEN_SPEC.exec(params.token);
+  if (!token) throw new RangeError('token must be "name:tokenId" (a 16-byte hex token id)');
+  const amount = normalizeDecimal(params.amount);
+  if (amount.startsWith("-") || !(toNumber(amount) > 0)) throw new RangeError("amount must be above zero");
+  return prepare(
+    SendAssetRequest.entries.action,
+    SendAssetTypes,
+    {
+      type: "sendAsset",
+      destination: params.destination.toLowerCase(),
+      sourceDex: params.sourceDex,
+      destinationDex: params.destinationDex,
+      token: `${token[1]}:${(token[2] as string).toLowerCase()}`,
+      amount,
+      fromSubAccount: "",
+      nonce: params.nonce,
+    },
+    params,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// userSetAbstraction (account type)
+// ---------------------------------------------------------------------------------------------
+
+/** Account types Kokoah lets a user choose: Standard (`disabled`) and Unified (`unifiedAccount`). No portfolio margin yet. */
+export const ACCOUNT_MODES = ["disabled", "unifiedAccount"] as const;
+export type AccountMode = (typeof ACCOUNT_MODES)[number];
+
+/**
+ * Builds `userSetAbstraction` (`HyperliquidTransaction:UserSetAbstraction`) for the main wallet: Standard (separate
+ * spot and perps balances) or Unified (one balance per asset). `user` is lowercased, as the Python SDK does.
+ */
+export function buildAccountMode(params: {
+  user: `0x${string}`;
+  abstraction: AccountMode;
+  nonce: number;
+  network: UserSignedNetwork;
+  signatureChainId?: `0x${string}`;
+}): PreparedUserSignedAction {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(params.user)) throw new RangeError("user must be a 20-byte hex address");
+  if (!(ACCOUNT_MODES as readonly string[]).includes(params.abstraction)) {
+    throw new RangeError(`abstraction must be one of ${ACCOUNT_MODES.join(", ")}`);
+  }
+  return prepare(
+    UserSetAbstractionRequest.entries.action,
+    UserSetAbstractionTypes,
+    { type: "userSetAbstraction", user: params.user.toLowerCase(), abstraction: params.abstraction, nonce: params.nonce },
     params,
   );
 }

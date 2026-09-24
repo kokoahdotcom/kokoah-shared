@@ -27,6 +27,8 @@ from hyperliquid.utils.signing import (
     sign_approve_builder_fee,
     sign_inner,
     sign_l1_action,
+    sign_send_asset_action,
+    sign_user_set_abstraction_action,
     sign_withdraw_from_bridge_action,
     user_signed_payload,
 )
@@ -266,6 +268,54 @@ user_signed(
     {"destination": DESTINATION, "amount": "12.5", "time": NONCE, "type": "withdraw3"},
     sign_withdraw_from_bridge_action,
     True,
+)
+
+# sendAsset (Exchange.send_asset builds this dict; token is "name:tokenId"; fromSubAccount "" = the main account).
+USDC_MAINNET = "USDC:0x6d1e7cde53ba9467b783cb7c530ce054"
+USDC_TESTNET = "USDC:0xeb62eee3685fc4c43992febcd9e75443"
+user_signed(
+    "send_asset_perps_mainnet",
+    {
+        "type": "sendAsset",
+        "destination": DESTINATION,
+        "sourceDex": "",
+        "destinationDex": "",
+        "token": USDC_MAINNET,
+        "amount": "25.5",
+        "fromSubAccount": "",
+        "nonce": NONCE,
+    },
+    sign_send_asset_action,
+    True,
+)
+user_signed(
+    "send_asset_spot_testnet",
+    {
+        "type": "sendAsset",
+        "destination": DESTINATION,
+        "sourceDex": "spot",
+        "destinationDex": "spot",
+        "token": USDC_TESTNET,
+        "amount": "1",
+        "fromSubAccount": "",
+        "nonce": NONCE,
+    },
+    sign_send_asset_action,
+    False,
+)
+
+# userSetAbstraction (Exchange.user_set_abstraction lowercases the user).
+user_signed(
+    "user_set_abstraction_unified_mainnet",
+    {"type": "userSetAbstraction", "user": wallet_a.address.lower(), "abstraction": "unifiedAccount", "nonce": NONCE},
+    sign_user_set_abstraction_action,
+    True,
+)
+user_signed(
+    "user_set_abstraction_disabled_testnet",
+    {"type": "userSetAbstraction", "user": wallet_a.address.lower(), "abstraction": "disabled", "nonce": NONCE},
+    sign_user_set_abstraction_action,
+    False,
 )
 
 # Same scheme with a different signatureChainId (Arbitrum One, 0xa4b1), bypassing the SDK's 0x66eee default.

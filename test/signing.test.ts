@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import { MainnetWriteBlockedError, getNetworkConfig, MAINNET, TESTNET } from "../src/network/index.js";
 import {
   buildApproveAgent,
+  buildAccountMode,
   buildApproveBuilderFee,
   buildExchangeRequest,
   buildRevokeAgent,
+  buildSendAsset,
   buildWithdraw,
   expiresAfterFromNow,
   formatAgentName,
@@ -99,6 +101,96 @@ describe("approveBuilderFee and withdraw typed data", () => {
     const p = buildWithdraw({ destination: builder, amount: "12.50", nonce: NOW, network: TESTNET });
     expect(p.action).toMatchObject({ type: "withdraw3", amount: "12.5", time: NOW, hyperliquidChain: "Testnet" });
     expect(p.typedData.primaryType).toBe("HyperliquidTransaction:Withdraw");
+  });
+});
+
+describe("sendAsset typed data", () => {
+  const destination = "0x3333333333333333333333333333333333333333" as const;
+  const token = "USDC:0x6d1e7cde53ba9467b783cb7c530ce054";
+  const base = { destination, sourceDex: "", destinationDex: "", token, amount: "25.50", nonce: NOW, network: MAINNET };
+  it("signs every field as a readable string and posts the same action", () => {
+    const p = buildSendAsset(base);
+    expect(p.action).toEqual({
+      type: "sendAsset",
+      signatureChainId: "0xa4b1",
+      hyperliquidChain: "Mainnet",
+      destination,
+      sourceDex: "",
+      destinationDex: "",
+      token,
+      amount: "25.5",
+      fromSubAccount: "",
+      nonce: NOW,
+    });
+    expect(p.typedData.primaryType).toBe("HyperliquidTransaction:SendAsset");
+    expect(p.typedData.domain.name).toBe("HyperliquidSignTransaction");
+    expect(p.typedData.types["HyperliquidTransaction:SendAsset"]?.map((f) => f.type)).toEqual([
+      "string",
+      "string",
+      "string",
+      "string",
+      "string",
+      "string",
+      "string",
+      "uint64",
+    ]);
+    expect(p.typedData.message).toMatchObject({ destination, token, amount: "25.5", fromSubAccount: "", nonce: NOW });
+  });
+  it("lowercases the destination and the token id, and keeps spot as spot", () => {
+    const p = buildSendAsset({
+      ...base,
+      destination: "0xABCDEF0000000000000000000000000000000001",
+      sourceDex: "spot",
+      destinationDex: "spot",
+      token: "USDC:0x6D1E7CDE53BA9467B783CB7C530CE054",
+      network: TESTNET,
+    });
+    expect(p.action).toMatchObject({
+      destination: "0xabcdef0000000000000000000000000000000001",
+      sourceDex: "spot",
+      destinationDex: "spot",
+      token,
+      hyperliquidChain: "Testnet",
+    });
+    expect(p.typedData.message.destination).toBe(p.action.destination);
+  });
+  it("refuses bad destinations, dexes, tokens and amounts", () => {
+    expect(() => buildSendAsset({ ...base, destination: "0x1234" as `0x${string}` })).toThrow(RangeError);
+    expect(() => buildSendAsset({ ...base, destination: "0x0000000000000000000000000000000000000000" })).toThrow(/zero address/);
+    expect(() => buildSendAsset({ ...base, sourceDex: "Spot " })).toThrow(RangeError);
+    expect(() => buildSendAsset({ ...base, destinationDex: "a:b" })).toThrow(RangeError);
+    expect(() => buildSendAsset({ ...base, token: "USDC" })).toThrow(/name:tokenId/);
+    expect(() => buildSendAsset({ ...base, token: "USDC:0x1234" })).toThrow(RangeError);
+    expect(() => buildSendAsset({ ...base, amount: "0" })).toThrow(/above zero/);
+    expect(() => buildSendAsset({ ...base, amount: "-1" })).toThrow(/above zero/);
+    expect(() => buildSendAsset({ ...base, amount: "abc" })).toThrow();
+  });
+  it("recovers the main wallet from its signature", async () => {
+    const wallet = privateKeyToAccount(generatePrivateKey());
+    const p = buildSendAsset(base);
+    const hex = await wallet.signTypedData(p.typedData as Parameters<typeof wallet.signTypedData>[0]);
+    expect(await recoverUserSignedSigner({ typedData: p.typedData, signature: signatureFromHex(hex) })).toBe(wallet.address);
+  });
+});
+
+describe("account type (userSetAbstraction) typed data", () => {
+  const user = "0xABCDEF0000000000000000000000000000000001" as const;
+  it("builds Standard and Unified with a lowercased user", () => {
+    const p = buildAccountMode({ user, abstraction: "unifiedAccount", nonce: NOW, network: TESTNET, signatureChainId: "0x66eee" });
+    expect(p.action).toEqual({
+      type: "userSetAbstraction",
+      signatureChainId: "0x66eee",
+      hyperliquidChain: "Testnet",
+      user: user.toLowerCase(),
+      abstraction: "unifiedAccount",
+      nonce: NOW,
+    });
+    expect(p.typedData.primaryType).toBe("HyperliquidTransaction:UserSetAbstraction");
+    expect(buildAccountMode({ user, abstraction: "disabled", nonce: NOW, network: MAINNET }).action.abstraction).toBe("disabled");
+  });
+  it("refuses portfolio margin and other modes", () => {
+    expect(() => buildAccountMode({ user, abstraction: "portfolioMargin" as "disabled", nonce: NOW, network: TESTNET })).toThrow(RangeError);
+    expect(() => buildAccountMode({ user: "0x12" as `0x${string}`, abstraction: "disabled", nonce: NOW, network: TESTNET })).toThrow(RangeError);
   });
 });
 

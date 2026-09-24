@@ -5,8 +5,8 @@ were produced) to sign a fixed set of actions with fixed, obviously fake keys an
 `test/golden/vectors.json`, is checked in. `test/golden.test.ts` asserts that this library produces:
 
 - the same L1 `connectionId` (msgpack + nonce + vault + expiresAfter hash) and the same `{r, s, v}` for every L1 vector;
-- the same `{r, s, v}` for every user-signed vector (approveAgent, approveBuilderFee, withdraw3), via our typed-data
-  builders and via the SDK wrapper;
+- the same `{r, s, v}` for every user-signed vector (approveAgent, approveBuilderFee, withdraw3, sendAsset,
+  userSetAbstraction), via our typed-data builders and via the SDK wrapper;
 - byte-identical wire actions from `compileAction` for the vectors that correspond to an intent.
 
 The keys (`0x0123…cdef`, `0xfedc…3210`) are public test constants. Never fund them. No network access is involved.
