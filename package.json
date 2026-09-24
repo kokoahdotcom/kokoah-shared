@@ -72,6 +72,11 @@
       "import": "./dist/algos/index.js",
       "default": "./dist/algos/index.js"
     },
+    "./link": {
+      "types": "./dist/link/index.d.ts",
+      "import": "./dist/link/index.js",
+      "default": "./dist/link/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
