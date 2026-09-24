@@ -304,6 +304,25 @@ user_signed(
     False,
 )
 
+# sendAsset from a sub-account back to its master (Exchange(vault_address=SUB).send_asset puts the sub-account in
+# fromSubAccount; Kokoah signs it with the master's main wallet to move funds between accounts).
+SUB_ACCOUNT = "0x4444444444444444444444444444444444444444"
+user_signed(
+    "send_asset_from_sub_account_testnet",
+    {
+        "type": "sendAsset",
+        "destination": wallet_a.address.lower(),
+        "sourceDex": "",
+        "destinationDex": "",
+        "token": USDC_TESTNET,
+        "amount": "10",
+        "fromSubAccount": SUB_ACCOUNT,
+        "nonce": NONCE,
+    },
+    sign_send_asset_action,
+    False,
+)
+
 # userSetAbstraction (Exchange.user_set_abstraction lowercases the user).
 user_signed(
     "user_set_abstraction_unified_mainnet",

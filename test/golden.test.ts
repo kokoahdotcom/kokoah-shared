@@ -73,6 +73,7 @@ describe("golden vectors file", () => {
     expect(vectors.filter((v) => v.kind === "l1").length).toBeGreaterThanOrEqual(15);
     expect(vectors.filter((v) => v.kind === "userSigned").length).toBeGreaterThanOrEqual(10);
     for (const type of ["sendAsset", "userSetAbstraction"]) expect(vectors.some((v) => v.action.type === type)).toBe(true);
+    expect(vectors.some((v) => v.action.type === "sendAsset" && v.action.fromSubAccount !== "")).toBe(true);
   });
 });
 
@@ -265,6 +266,7 @@ describe("user-signed signatures match the Python SDK", () => {
             nonce: v.nonce,
             network,
             signatureChainId,
+            ...(a.fromSubAccount ? { fromSubAccount: a.fromSubAccount as `0x${string}` } : {}),
           }),
           types: SendAssetTypes,
         };

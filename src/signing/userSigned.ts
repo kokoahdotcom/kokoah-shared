@@ -266,16 +266,28 @@ export interface SendAssetParams {
   nonce: number;
   network: UserSignedNetwork;
   signatureChainId?: `0x${string}`;
+  /**
+   * Send from this sub-account of the signing master instead of the master itself (signed as `fromSubAccount`).
+   * Omit for the main account (""). HL only accepts it when the signer is the sub-account's master.
+   */
+  fromSubAccount?: `0x${string}`;
 }
 
 /**
  * Builds `sendAsset` (HyperCore transfer to another address, `HyperliquidTransaction:SendAsset`) for the main wallet.
- * Every signed field is a readable string: destination, source and destination balance, token, amount.
- * `fromSubAccount` is always "" (the main account): Kokoah does not move sub-account funds. Refuses the zero address.
+ * Every signed field is a readable string: destination, source and destination balance, token, amount and the
+ * sub-account the funds leave from (`fromSubAccount`, "" for the main account). Refuses the zero address, and a
+ * sub-account sending to itself.
  */
 export function buildSendAsset(params: SendAssetParams): PreparedUserSignedAction {
   if (!/^0x[0-9a-fA-F]{40}$/.test(params.destination)) throw new RangeError("destination must be a 20-byte hex address");
   if (params.destination.toLowerCase() === ZERO_ADDRESS) throw new RangeError("destination must not be the zero address");
+  const from = params.fromSubAccount;
+  if (from !== undefined) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(from)) throw new RangeError("fromSubAccount must be a 20-byte hex address");
+    if (from.toLowerCase() === ZERO_ADDRESS) throw new RangeError("fromSubAccount must not be the zero address");
+    if (from.toLowerCase() === params.destination.toLowerCase()) throw new RangeError("fromSubAccount and destination must differ");
+  }
   for (const [name, dex] of [
     ["sourceDex", params.sourceDex],
     ["destinationDex", params.destinationDex],
@@ -296,11 +308,59 @@ export function buildSendAsset(params: SendAssetParams): PreparedUserSignedActio
       destinationDex: params.destinationDex,
       token: `${token[1]}:${(token[2] as string).toLowerCase()}`,
       amount,
-      fromSubAccount: "",
+      fromSubAccount: from === undefined ? "" : from.toLowerCase(),
       nonce: params.nonce,
     },
     params,
   );
+}
+
+/** Parameters for {@link buildSubAccountTransfer}. */
+export interface SubAccountTransferParams {
+  /** The signing main wallet (the sub-account's master). */
+  master: `0x${string}`;
+  /** One of the master's sub-accounts (check it with `@kokoah/shared/subaccounts` before asking for a signature). */
+  subAccount: `0x${string}`;
+  /** `toSubAccount`: master → sub-account. `toMaster`: sub-account → master. */
+  direction: "toSubAccount" | "toMaster";
+  /** `tokenName:tokenId`, e.g. USDC from `spotMeta`. */
+  token: string;
+  amount: string | number;
+  /** Balance moved on both sides: "" (the first perp dex, the default), a HIP-3 dex name, or "spot". */
+  dex?: string;
+  nonce: number;
+  network: UserSignedNetwork;
+  signatureChainId?: `0x${string}`;
+}
+
+/**
+ * Moves funds between the main account and one of its sub-accounts in one readable `sendAsset` signed by the main
+ * wallet: to the sub-account (`destination` = sub-account, `fromSubAccount` = "") or back to the main account
+ * (`destination` = master, `fromSubAccount` = sub-account). Used instead of the opaque L1 `subAccountTransfer`, which
+ * Kokoah never asks the main wallet to sign.
+ */
+export function buildSubAccountTransfer(params: SubAccountTransferParams): PreparedUserSignedAction {
+  for (const [name, a] of [
+    ["master", params.master],
+    ["subAccount", params.subAccount],
+  ] as const) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(a)) throw new RangeError(`${name} must be a 20-byte hex address`);
+  }
+  if (params.master.toLowerCase() === params.subAccount.toLowerCase()) throw new RangeError("subAccount must differ from master");
+  if (params.direction !== "toSubAccount" && params.direction !== "toMaster") throw new RangeError('direction must be "toSubAccount" or "toMaster"');
+  const dex = params.dex ?? "";
+  const common = {
+    sourceDex: dex,
+    destinationDex: dex,
+    token: params.token,
+    amount: params.amount,
+    nonce: params.nonce,
+    network: params.network,
+    ...(params.signatureChainId !== undefined ? { signatureChainId: params.signatureChainId } : {}),
+  };
+  return params.direction === "toSubAccount"
+    ? buildSendAsset({ ...common, destination: params.subAccount })
+    : buildSendAsset({ ...common, destination: params.master, fromSubAccount: params.subAccount });
 }
 
 // ---------------------------------------------------------------------------------------------

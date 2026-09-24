@@ -8,6 +8,7 @@ import {
   buildExchangeRequest,
   buildRevokeAgent,
   buildSendAsset,
+  buildSubAccountTransfer,
   buildWithdraw,
   expiresAfterFromNow,
   formatAgentName,
@@ -170,6 +171,36 @@ describe("sendAsset typed data", () => {
     const p = buildSendAsset(base);
     const hex = await wallet.signTypedData(p.typedData as Parameters<typeof wallet.signTypedData>[0]);
     expect(await recoverUserSignedSigner({ typedData: p.typedData, signature: signatureFromHex(hex) })).toBe(wallet.address);
+  });
+  it("signs a send from a sub-account as a readable fromSubAccount", () => {
+    const sub = "0xAAAA000000000000000000000000000000000001" as const;
+    const p = buildSendAsset({ ...base, fromSubAccount: sub });
+    expect(p.action.fromSubAccount).toBe(sub.toLowerCase());
+    expect(p.typedData.message.fromSubAccount).toBe(sub.toLowerCase());
+    expect(() => buildSendAsset({ ...base, fromSubAccount: "0x12" as `0x${string}` })).toThrow(/fromSubAccount/);
+    expect(() => buildSendAsset({ ...base, fromSubAccount: "0x0000000000000000000000000000000000000000" })).toThrow(/zero address/);
+    expect(() => buildSendAsset({ ...base, fromSubAccount: destination })).toThrow(/differ/);
+  });
+});
+
+describe("moving funds between the main account and a sub-account", () => {
+  const master = "0x1111000000000000000000000000000000000001" as const;
+  const subAccount = "0x2222000000000000000000000000000000000002" as const;
+  const base = { master, subAccount, token: "USDC:0xeb62eee3685fc4c43992febcd9e75443", amount: "10", nonce: NOW, network: TESTNET };
+  it("sends to the sub-account from the main account", () => {
+    const p = buildSubAccountTransfer({ ...base, direction: "toSubAccount" });
+    expect(p.action).toMatchObject({ type: "sendAsset", destination: subAccount, fromSubAccount: "", sourceDex: "", destinationDex: "", amount: "10" });
+  });
+  it("sends back to the main account from the sub-account", () => {
+    const p = buildSubAccountTransfer({ ...base, direction: "toMaster", dex: "spot" });
+    expect(p.action).toMatchObject({ destination: master, fromSubAccount: subAccount, sourceDex: "spot", destinationDex: "spot" });
+    expect(p.typedData.message).toMatchObject({ destination: master, fromSubAccount: subAccount });
+  });
+  it("refuses a sub-account equal to the master and bad input", () => {
+    expect(() => buildSubAccountTransfer({ ...base, subAccount: master, direction: "toMaster" })).toThrow(/differ/);
+    expect(() => buildSubAccountTransfer({ ...base, master: "0x1" as `0x${string}`, direction: "toMaster" })).toThrow(/master/);
+    expect(() => buildSubAccountTransfer({ ...base, direction: "sideways" as "toMaster" })).toThrow(/direction/);
+    expect(() => buildSubAccountTransfer({ ...base, amount: "0", direction: "toSubAccount" })).toThrow(/above zero/);
   });
 });
 

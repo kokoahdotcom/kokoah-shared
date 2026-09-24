@@ -8,11 +8,19 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 
 ### Added
 - `signing`: `buildSendAsset` (readable `HyperliquidTransaction:SendAsset` for the main wallet; `fromSubAccount` is
-  always the main account) and `buildAccountMode` (`userSetAbstraction`, Standard or Unified; `ACCOUNT_MODES`,
+  the main account unless given) and `buildAccountMode` (`userSetAbstraction`, Standard or Unified; `ACCOUNT_MODES`,
   `AccountMode`), both checked against new Python SDK golden vectors.
 - `link` (new subpath `@kokoah/shared/link`): `deviceLinkCode`, the 6-digit matching code for linking a phone (HMAC-SHA256
   keyed with the QR code's link secret over pairing id, account, agent address, agent name and expiry), plus
   `generateLinkSecret`, `formatLinkCode`, `deviceLinkCodeMessage`, `hmacSha256` and base64url helpers.
+
+- `subaccounts` (new subpath `@kokoah/shared/subaccounts`): `parseSubAccounts` (HL `subAccounts` answer → the
+  master's sub-accounts, failing closed on anything malformed or of another master), `SubAccountOwnership` (cached,
+  fail-closed "is this a sub-account of that master?" check with a re-read on a miss; signers deny when HL can't be
+  read), `accountOf` and `isAccountAddress`.
+- `signing`: `buildSendAsset` takes an optional `fromSubAccount` (signed as a readable field), and
+  `buildSubAccountTransfer` moves funds between the main account and one of its sub-accounts with one `sendAsset`
+  (checked against a new Python SDK golden vector).
 
 ## [0.1.3] - 2026-09-23
 

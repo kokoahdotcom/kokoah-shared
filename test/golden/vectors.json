@@ -792,6 +792,31 @@
       }
     },
     {
+      "name": "send_asset_from_sub_account_testnet",
+      "kind": "userSigned",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "type": "sendAsset",
+        "destination": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+        "sourceDex": "",
+        "destinationDex": "",
+        "token": "USDC:0xeb62eee3685fc4c43992febcd9e75443",
+        "amount": "10",
+        "fromSubAccount": "0x4444444444444444444444444444444444444444",
+        "nonce": 1790000000000,
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Testnet"
+      },
+      "signature": {
+        "r": "0x7665facb067de3ba2fbd40352cae05b8742b4000d070848f0f5b0ca638d5aefe",
+        "s": "0x799f177498e8c66ebf2e31019f239e25bb85c656f5860938075511bd6c5104a5",
+        "v": 28
+      }
+    },
+    {
       "name": "user_set_abstraction_unified_mainnet",
       "kind": "userSigned",
       "isMainnet": true,

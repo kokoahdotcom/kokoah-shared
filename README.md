@@ -221,7 +221,8 @@ Cloid layout: `0x6b6f` ("ko") + origin byte (01 manual, 02 guardian, 03 ai_ticke
 - L1 (agent key): `signL1Action`, `hashL1Action`, `l1TypedData`, `l1SigningDigest` (for KMS/HSM raw-digest signers),
   `recoverL1Signer`, `signatureToHex`, `signatureFromHex`.
 - User-signed (main wallet): `buildApproveAgent` (named, `valid_until`, ≤ 180 days, name ≤ 16 chars),
-  `buildRevokeAgent`, `buildApproveBuilderFee` (max 0.1%, 0 revokes), `buildWithdraw`, `userSignedTypedData`,
+  `buildRevokeAgent`, `buildApproveBuilderFee` (max 0.1%, 0 revokes), `buildWithdraw`, `buildSendAsset` (optional
+  `fromSubAccount`), `buildSubAccountTransfer` (main account ⇄ sub-account in one readable `sendAsset`), `userSignedTypedData`,
   `userSignedDigest`, `signUserSignedAction`, `recoverUserSignedSigner`, `formatAgentName`, `parseAgentName`.
 - Nonces: `NonceManager` interface, `MonotonicNonceManager` (`max(now, last + 1)` per key, clock offset, `observe`),
   `isNonceInWindow`.
@@ -311,11 +312,20 @@ never sent to a server) over those fields, so a relay that swaps the agent addre
 `generateLinkSecret`, `formatLinkCode` ("482 913"), `deviceLinkCodeMessage`, `hmacSha256` and base64url helpers.
 Subpath export only (`@kokoah/shared/link`), not re-exported from the root.
 
+### `subaccounts`
+Sub-accounts as "strategy accounts". The master's agent key trades for a sub-account by setting `vaultAddress`, and HL
+accepts the same field for a vault the master leads, so signers allow it only for an address that HL's own
+`{"type":"subAccounts","user":master}` lists for that master. `parseSubAccounts(raw, master)` reads that answer and fails
+closed (malformed entries, another master, the master itself and repeats are dropped). `SubAccountOwnership` wraps it
+in a cache for signers (`find`, `isOwned`, `list`, `invalidate`): 30 s TTL, a re-read on a miss once the list is 5 s
+old, shared in-flight reads, and `SubAccountLookupError` when HL can't be read (deny, never allow). Also `accountOf`
+and `isAccountAddress`. Subpath export only (`@kokoah/shared/subaccounts`).
+
 ---
 
 ## Golden vectors (signing matches the official Python SDK)
 
-`test/golden/vectors.json` holds 24 vectors produced by `hyperliquid-python-sdk` 0.24.0 with fake keys and fixed
+`test/golden/vectors.json` holds 29 vectors produced by `hyperliquid-python-sdk` 0.24.0 with fake keys and fixed
 nonces: 18 L1 actions (orders with builder, normalTpsl, HIP-3 IOC, vault, expiresAfter, vault + expiresAfter,
 stop-limit positionTpsl, cancel with a >2³² oid, cancelByCloid, updateLeverage, negative updateIsolatedMargin,
 scheduleCancel set/clear, modify by oid / by cloid, batchModify, noop) and 6 user-signed actions (approveAgent
