@@ -456,13 +456,13 @@ describe("ledger", () => {
 });
 
 describe("bot orders and needs", () => {
-  it("derives stable guardian-origin cloids and valid intents", () => {
+  it("derives stable bot-origin cloids and valid intents", () => {
     expect(botCloid(BOT, 7)).toBe(botCloid(BOT, 7));
     expect(botCloid(BOT, 7)).not.toBe(botCloid(BOT, 8));
-    expect(parseCloid(botCloid(BOT, 7))).toMatchObject({ kokoah: true, origin: "guardian" });
+    expect(parseCloid(botCloid(BOT, 7))).toMatchObject({ kokoah: true, origin: "bot" });
     const limit = plannedOrderIntent({ cloid: cloid(1), coin: "ETH", side: "buy", size: "0.025", type: "limit", price: "2400", reduceOnly: false, label: "x" }, "0x00000000000000000000000000000000000000AB");
     expect(v.safeParse(OrderIntentSchema, limit).success).toBe(true);
-    expect(limit).toMatchObject({ orderType: "limit", tif: "Gtc", origin: "guardian", vaultAddress: "0x00000000000000000000000000000000000000ab" });
+    expect(limit).toMatchObject({ orderType: "limit", tif: "Gtc", origin: "bot", vaultAddress: "0x00000000000000000000000000000000000000ab" });
     const market = plannedOrderIntent({ cloid: cloid(2), coin: "ETH", side: "sell", size: "0.025", type: "market", reduceOnly: true, label: "x" });
     expect(market).toMatchObject({ orderType: "market", slippageBps: 100, reduceOnly: true });
     expect(v.safeParse(OrderIntentSchema, market).success).toBe(true);

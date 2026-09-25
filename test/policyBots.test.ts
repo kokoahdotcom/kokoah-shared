@@ -28,8 +28,9 @@ const needs = (over: Partial<BotLimitNeeds> = {}): BotLimitNeeds => ({
 describe("bot limits", () => {
   it("lists every limit the default policy is too tight on", () => {
     const short = botLimitShortfalls(reduceOnly(), needs());
-    expect(short.map((s) => s.field)).toEqual(["maxOrderNotionalUsd", "maxDailyNotionalUsd", "maxLeverage", "requireStopLossForNewEntries"]);
-    expect(short[0]).toEqual({ field: "maxOrderNotionalUsd", label: "Max order size", current: "$1", needed: "$77" });
+    expect(short.map((s) => s.field)).toEqual(["allowedOrigins", "maxOrderNotionalUsd", "maxDailyNotionalUsd", "maxLeverage", "botEntriesWithoutStopLoss"]);
+    expect(short[0]).toEqual({ field: "allowedOrigins", label: "Order origin", current: "guardian", needed: "also bots (bot)" });
+    expect(short[1]).toEqual({ field: "maxOrderNotionalUsd", label: "Max order size", current: "$1", needed: "$77" });
   });
 
   it("raises only what is short and keeps everything else", () => {
@@ -39,8 +40,10 @@ describe("bot limits", () => {
     expect(next.allowedCoins).toEqual(["BTC", "ETH"]);
     expect(next.maxDailyNotionalUsd).toBe(50_000);
     expect(next.maxOrderNotionalUsd).toBe(77);
-    expect(next.requireStopLossForNewEntries).toBe(false);
-    expect(next.allowedOrigins).toEqual(["manual", "guardian"]);
+    // The stop-loss rule stays for every other origin; only bots are exempt.
+    expect(next.requireStopLossForNewEntries).toBe(true);
+    expect(next.botEntriesWithoutStopLoss).toBe(true);
+    expect(next.allowedOrigins).toEqual(["manual", "bot"]);
     expect(next.allowedVaultAddresses).toEqual(["0x00000000000000000000000000000000000000ab"]);
     // Untouched fields.
     expect(next.requiredBuilder).toEqual(builder);
@@ -55,6 +58,7 @@ describe("bot limits", () => {
   it("adds missing bot actions and refuses needs above the bounds", () => {
     const tight = parsePolicy({ ...reduceOnly(), allowedActionTypes: ["order", "noop"] });
     expect(botLimitShortfalls(tight, needs())[0]).toMatchObject({ field: "allowedActionTypes", needed: "also cancel, cancelByCloid" });
+    expect(botLimitShortfalls(tight, needs())[1]).toMatchObject({ field: "allowedOrigins", needed: "also bots (bot)" });
     expect(policyForBots(tight, needs()).allowedActionTypes).toEqual(["order", "noop", "cancel", "cancelByCloid"]);
     expect(() => policyForBots(tight, needs({ maxOrderNotionalUsd: 2_000_000 }))).toThrow(BotLimitsTooHighError);
     expect(() => policyForBots(tight, needs({ dailyNotionalUsd: 30_000_000, maxLeverage: 60 }))).toThrow(/daily volume.*leverage/);

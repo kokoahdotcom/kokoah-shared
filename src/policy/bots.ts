@@ -5,6 +5,9 @@
  * the one policy to re-sign ({@link policyForBots}): the current policy with only the short fields raised, so every
  * other choice (and any field this module does not know) is kept.
  *
+ * Bot orders carry origin `bot`. When the user requires a stop-loss on new entries, only bots are exempt, through the
+ * signed `botEntriesWithoutStopLoss`: the requirement itself stays on for guardians, Telegram and every other origin.
+ *
  * @module
  */
 import type { Policy } from "./schema.js";
@@ -49,7 +52,9 @@ export type BotLimitField =
   | "maxDailyNotionalUsd"
   | "maxLeverage"
   | "maxOrdersPerMinute"
+  /** No longer produced (bots get `botEntriesWithoutStopLoss` instead); kept so older callers still type-check. */
   | "requireStopLossForNewEntries"
+  | "botEntriesWithoutStopLoss"
   | "priceBandPct"
   | "allowedVaultAddresses";
 
@@ -102,8 +107,8 @@ export function botLimitShortfalls(policy: Policy, needs: BotLimitNeeds): BotLim
   const actions = policy.allowedActionTypes as readonly string[];
   const lackingActions = BOT_ACTION_TYPES.filter((a) => !actions.includes(a));
   if (lackingActions.length) out.push({ field: "allowedActionTypes", label: "Allowed actions", current: actions.join(", "), needed: `also ${lackingActions.join(", ")}` });
-  if (policy.allowedOrigins && !policy.allowedOrigins.includes("guardian")) {
-    out.push({ field: "allowedOrigins", label: "Order origin", current: policy.allowedOrigins.join(", "), needed: "also automation (guardian)" });
+  if (policy.allowedOrigins && !policy.allowedOrigins.includes("bot")) {
+    out.push({ field: "allowedOrigins", label: "Order origin", current: policy.allowedOrigins.join(", "), needed: "also bots (bot)" });
   }
   const missing = missingCoins(policy, needs);
   if (missing === "*" || missing.length) {
@@ -119,8 +124,13 @@ export function botLimitShortfalls(policy: Policy, needs: BotLimitNeeds): BotLim
   if (policy.maxOrdersPerMinute < needs.ordersPerMinute) {
     out.push({ field: "maxOrdersPerMinute", label: "Orders per minute", current: String(policy.maxOrdersPerMinute), needed: String(needs.ordersPerMinute) });
   }
-  if (needs.entriesWithoutStopLoss && policy.requireStopLossForNewEntries) {
-    out.push({ field: "requireStopLossForNewEntries", label: "Stop-loss on new entries", current: "Required", needed: "Not required (bots manage their own exits)" });
+  if (needs.entriesWithoutStopLoss && policy.requireStopLossForNewEntries && policy.botEntriesWithoutStopLoss !== true) {
+    out.push({
+      field: "botEntriesWithoutStopLoss",
+      label: "Stop-loss on bot entries",
+      current: "Required",
+      needed: "Not required for bots (they manage their own exits; guardians and Telegram still need one)",
+    });
   }
   if (policy.priceBandPct < needs.marketSlippagePct) {
     out.push({ field: "priceBandPct", label: "Limit price band", current: `${policy.priceBandPct}%`, needed: `${needs.marketSlippagePct}%` });
@@ -150,7 +160,7 @@ export function policyForBots(policy: Policy, needs: BotLimitNeeds): Policy {
   const actions = [...(policy.allowedActionTypes as readonly string[])];
   for (const a of BOT_ACTION_TYPES) if (!actions.includes(a)) actions.push(a);
   next.allowedActionTypes = actions as Policy["allowedActionTypes"];
-  if (policy.allowedOrigins && !policy.allowedOrigins.includes("guardian")) next.allowedOrigins = [...policy.allowedOrigins, "guardian"];
+  if (policy.allowedOrigins && !policy.allowedOrigins.includes("bot")) next.allowedOrigins = [...policy.allowedOrigins, "bot"];
   const missing = missingCoins(policy, needs);
   if (missing === "*") next.allowedCoins = "*";
   else if (missing.length) next.allowedCoins = [...(policy.allowedCoins as readonly string[]), ...missing];
@@ -158,7 +168,8 @@ export function policyForBots(policy: Policy, needs: BotLimitNeeds): Policy {
   next.maxDailyNotionalUsd = Math.max(policy.maxDailyNotionalUsd, needs.dailyNotionalUsd, next.maxOrderNotionalUsd);
   next.maxLeverage = Math.max(policy.maxLeverage, needs.maxLeverage);
   next.maxOrdersPerMinute = Math.max(policy.maxOrdersPerMinute, needs.ordersPerMinute);
-  if (needs.entriesWithoutStopLoss) next.requireStopLossForNewEntries = false;
+  // Only bots skip the stop-loss; `requireStopLossForNewEntries` keeps the user's choice for every other origin.
+  if (needs.entriesWithoutStopLoss) next.botEntriesWithoutStopLoss = true;
   next.priceBandPct = Math.max(policy.priceBandPct, needs.marketSlippagePct);
   const vaults = new Set(policy.allowedVaultAddresses.map((a) => a.toLowerCase()));
   for (const a of needs.vaultAddresses ?? []) vaults.add(a.toLowerCase());

@@ -4,7 +4,8 @@
  *
  * Kokoah layout (bytes): `[0x6b 0x6f][origin][version][12 random or derived bytes]`
  * - `0x6b6f` is ASCII "ko" and marks Kokoah-generated orders (useful for attribution and reconciliation);
- * - origin: 0x01 manual, 0x02 guardian, 0x03 ai_ticket;
+ * - origin: 0x01 manual, 0x02 guardian, 0x03 ai_ticket, 0x04 bot, 0x05 telegram (codes are never reused, so cloids
+ *   made before an origin was added keep parsing the same way);
  * - version: 0x01.
  * A custom 4-byte tag can replace the first four bytes (e.g. for creator attribution).
  *
@@ -29,6 +30,8 @@ export const CLOID_ORIGIN_CODES: Readonly<Record<IntentOrigin, string>> = Object
   manual: "01",
   guardian: "02",
   ai_ticket: "03",
+  bot: "04",
+  telegram: "05",
 });
 
 const CLOID_RE = /^0x[0-9a-f]{32}$/;
@@ -57,7 +60,7 @@ function randomHex(bytes: number): string {
 }
 
 /**
- * Generates a random cloid. With an origin (`"manual" | "guardian" | "ai_ticket"`) the first 4 bytes carry the
+ * Generates a random cloid. With an origin (an {@link IntentOrigin}) the first 4 bytes carry the
  * Kokoah marker, origin and version; with a `0x`-prefixed 4-byte tag they carry that tag; otherwise all 16 bytes
  * are random. Uses `crypto.getRandomValues`.
  */

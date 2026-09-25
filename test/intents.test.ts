@@ -56,7 +56,7 @@ describe("intents", () => {
     ["negative size", order({ orderType: "market", size: -1 })],
     ["garbage size", order({ orderType: "market", size: "1,5" })],
     ["missing origin", { kind: "order", coin: "BTC", side: "buy", size: "1", orderType: "market" }],
-    ["bad origin", order({ orderType: "market", origin: "bot" })],
+    ["bad origin", order({ orderType: "market", origin: "robot" })],
     ["coin with space", order({ orderType: "market", coin: "B TC" })],
     ["slippage over 10%", order({ orderType: "market", slippageBps: 1001 })],
     ["bad vault", order({ orderType: "market", vaultAddress: "0x12" })],

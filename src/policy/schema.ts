@@ -33,6 +33,12 @@ export const PolicySchema = v.strictObject({
    * far away does not count). Optional; no distance limit when omitted.
    */
   maxStopLossDistancePct: v.optional(v.pipe(v.number(), v.gtValue(0), v.maxValue(100))),
+  /**
+   * With `requireStopLossForNewEntries`: entries with origin `bot` (grid, DCA, copy and signal bots, which manage their
+   * own exits) may go without a stop-loss. Only bots: guardian, Telegram, manual and AI entries still need one. Omitted:
+   * no exemption. Signed with the rest of the policy (through `policyHash`).
+   */
+  botEntriesWithoutStopLoss: v.optional(v.boolean()),
   /** Max orders per rolling minute (cancels are exempt). */
   maxOrdersPerMinute: v.pipe(v.number(), v.integer(), v.minValue(0)),
   /** Max distance of a limit price from mark, in percent. */
