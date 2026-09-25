@@ -54,20 +54,27 @@ export interface PlannerStep<S> {
   stop?: PlannerStop;
 }
 
-/** Deterministic cloid of a bot's n-th order: retries of the same order are recognised by Hyperliquid. */
+/**
+ * Deterministic cloid of a bot's n-th order: retries of the same order are recognised by Hyperliquid. Tagged with the
+ * `bot` origin (orders of bots created before that origin existed carry the `guardian` tag and still parse).
+ */
 export function botCloid(botId: string, seq: number): Cloid {
   if (!Number.isSafeInteger(seq) || seq < 0) throw new RangeError("seq must be a non-negative integer");
-  return deriveCloid(`kokoah-bot:${botId}:${seq}`, "guardian");
+  return deriveCloid(`kokoah-bot:${botId}:${seq}`, "bot");
 }
 
 /** Slippage of the bots' market orders in basis points. */
 export const BOT_MARKET_SLIPPAGE_BPS = Math.round(BOT_LIMITS.marketSlippagePct * 100);
 
-/** The intent the signer service checks and signs for a planned order (origin `guardian`: the automation key). */
+/**
+ * The intent the signer service checks and signs for a planned order: origin `bot`, sent with the automation key. The
+ * signed policy must allow that origin, and only a policy with `botEntriesWithoutStopLoss` lets bot entries skip a
+ * required stop-loss (guardians and Telegram entries never do).
+ */
 export function plannedOrderIntent(order: PlannedOrder, vaultAddress?: string): ActionIntent {
   const base = {
     kind: "order" as const,
-    origin: "guardian" as const,
+    origin: "bot" as const,
     coin: order.coin,
     side: order.side,
     size: order.size,
@@ -87,7 +94,7 @@ export function plannedOrderIntent(order: PlannedOrder, vaultAddress?: string): 
 export function botCancelIntent(coin: string, cloids: readonly string[], vaultAddress?: string): ActionIntent {
   return {
     kind: "cancel",
-    origin: "guardian",
+    origin: "bot",
     cancels: cloids.map((cloid) => ({ coin, cloid: cloid.toLowerCase() as `0x${string}` })),
     ...(vaultAddress ? { vaultAddress: vaultAddress.toLowerCase() as `0x${string}` } : {}),
   };

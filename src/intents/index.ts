@@ -15,8 +15,16 @@ import { isDecimal, normalizeDecimal } from "../precision/index.js";
 // Primitives
 // ---------------------------------------------------------------------------------------------
 
-/** Where an intent came from. */
-export const INTENT_ORIGINS = ["manual", "guardian", "ai_ticket"] as const;
+/**
+ * Where an intent came from:
+ * - `manual`: the user's own ticket (browser key);
+ * - `guardian`: a guardian rule on the server (automation key);
+ * - `ai_ticket`: an AI-drafted order the user confirmed;
+ * - `bot`: a grid, DCA, copy or signal bot on the server (automation key);
+ * - `telegram`: an order the user confirmed in Telegram (automation key).
+ * New origins are appended, never reordered, so stored values and cloid tags keep their meaning.
+ */
+export const INTENT_ORIGINS = ["manual", "guardian", "ai_ticket", "bot", "telegram"] as const;
 export type IntentOrigin = (typeof INTENT_ORIGINS)[number];
 
 /** Order types supported by the ticket (FRONTEND_SPEC §9.1). */

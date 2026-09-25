@@ -4,7 +4,8 @@
  *    config, TWAP) are denied with a specific code even if a policy lists them. One exception: `setReferrer` carrying
  *    exactly the policy's `referralCode`, for the main account (a raw wire action only);
  * 2. anything not in the policy's allow-list is denied;
- * 3. per-action limits: coins, notional, daily notional, leverage, stop-loss requirement, orders per minute,
+ * 3. per-action limits: coins, notional, daily notional, leverage, stop-loss requirement (origin `bot` is exempt only
+ *    when the policy says `botEntriesWithoutStopLoss`), orders per minute,
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
  *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock;
  * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain IOC order, with the builder on
@@ -236,12 +237,20 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
   }
 
   const legs = collectOrderLegs(intent, wire, context, add);
-  if (legs.length > 0) checkOrderLegs(legs, actionType, wire, context, coinAllowed, add);
+  if (legs.length > 0) checkOrderLegs(legs, actionType, wire, context, coinAllowed, add, origin);
 
   return { allowed: violations.length === 0, violations, actionType };
 }
 
-function checkOrderLegs(legs: OrderLeg[], actionType: string, wire: Wire | undefined, context: PolicyContext, coinAllowed: (coin: string) => boolean, add: AddFn): void {
+function checkOrderLegs(
+  legs: OrderLeg[],
+  actionType: string,
+  wire: Wire | undefined,
+  context: PolicyContext,
+  coinAllowed: (coin: string) => boolean,
+  add: AddFn,
+  origin: IntentOrigin | undefined,
+): void {
   const policy = context.policy;
   const exempt = policy.exemptReduceOnlyFromNotionalCaps;
   const band = policy.priceBandPct;
@@ -328,7 +337,9 @@ function checkOrderLegs(legs: OrderLeg[], actionType: string, wire: Wire | undef
   const entries = legs.filter((l) => !l.reduceOnly && l.coin !== undefined && !l.spot);
   if (entries.length > 0) {
     if (context.lossLockActive) add("DAILY_LOSS_LOCKED", "The daily loss lock is active: only closing and reducing orders are allowed.");
-    if (policy.requireStopLossForNewEntries) {
+    // Bots manage their own exits: the user's signed `botEntriesWithoutStopLoss` exempts origin `bot` only.
+    const botExempt = origin === "bot" && policy.botEntriesWithoutStopLoss === true;
+    if (policy.requireStopLossForNewEntries && !botExempt) {
       for (const e of entries) {
         if (context.hasStopLoss?.(e.coin as string) === true) continue;
         if (actionType !== "order") {
