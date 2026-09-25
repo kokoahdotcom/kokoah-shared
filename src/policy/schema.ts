@@ -65,6 +65,13 @@ export const PolicySchema = v.strictObject({
    */
   allowedSpotCoins: v.optional(v.pipe(v.array(CoinSchema), v.maxLength(50))),
   /**
+   * With `allowedSpotCoins`: the listed pairs may be traded, not only converted. Market orders (IOC) and IOC, GTC and
+   * post-only (ALO) limits within the price bands; still one order per action, with no modify, reduce-only, trigger or
+   * TP/SL grouping, the builder on sells and none on buys. Omitted or false: single IOC orders only (Convert). Signers
+   * that set it list only pairs they verified themselves against their own `spotMeta` (`verifiedSpotPairs`).
+   */
+  spotTrading: v.optional(v.boolean()),
+  /**
    * The one referral code `setReferrer` may carry (Kokoah's own Hyperliquid code). Omitted: `setReferrer` stays
    * hard-denied. Signers that allow it must also make sure it is signed at most once per account.
    */

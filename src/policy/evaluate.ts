@@ -8,9 +8,10 @@
  *    when the policy says `botEntriesWithoutStopLoss`), orders per minute,
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
  *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock;
- * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain IOC order, with the builder on
- *    sells and none on buys (Hyperliquid charges builder fees on spot sells only). Spot legs are exempt from the
- *    leverage, stop-loss and loss-lock rules, which are about perp exposure.
+ * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain order (IOC, or with
+ *    `spotTrading` also GTC and post-only limits within the bands), with the builder on sells and none on buys
+ *    (Hyperliquid charges builder fees on spot sells only). Spot legs are exempt from the leverage, stop-loss and
+ *    loss-lock rules, which are about perp exposure.
  *
  * Research basis: agents can sign `vaultTransfer`, `createVault` (10k USDC fee), `createSubAccount`, … (research B
  * §1.7, §1.8), so the signer must decode and check the structured action before hashing.
@@ -369,15 +370,25 @@ function checkOrderLegs(
   }
 }
 
+/** Time-in-force values a spot limit may carry when `spotTrading` is on (`FrontendMarket` is Hyperliquid's own). */
+const SPOT_TRADING_TIFS: ReadonlySet<LimitTif | undefined> = new Set<LimitTif | undefined>(["Gtc", "Ioc", "Alo"]);
+
 /**
- * Spot: only pairs in `allowedSpotCoins` (Convert's stablecoin pairs), and only as one plain IOC order: no modify, no
- * triggers, no reduce-only, no TP/SL grouping. Spot trading beyond that is a separate, later decision.
+ * Spot: only pairs in `allowedSpotCoins`, one plain order per action: no modify, no triggers, no reduce-only, no TP/SL
+ * grouping. Without `spotTrading` (Convert's stablecoin pairs) the order must be immediate-or-cancel; with it, market
+ * orders and IOC, GTC and post-only limits are allowed (the price bands above still apply).
  */
 function checkSpotLegs(legs: OrderLeg[], actionType: string, wire: Wire | undefined, policy: Policy, add: AddFn): void {
   const allowed = policy.allowedSpotCoins ?? [];
+  const trading = policy.spotTrading === true;
   for (const leg of legs) {
     if (!leg.spot || leg.coin === undefined) continue;
-    if (!allowed.includes(leg.coin)) add("SPOT_NOT_ALLOWED", `${leg.coin}: spot trading is not available; only stablecoin conversions on listed pairs are.`);
+    if (!allowed.includes(leg.coin)) {
+      add(
+        "SPOT_NOT_ALLOWED",
+        trading ? `${leg.coin}: this spot pair can't be traded with this key.` : `${leg.coin}: spot trading is not available; only stablecoin conversions on listed pairs are.`,
+      );
+    }
   }
   if (actionType !== "order") {
     add("SPOT_NOT_ALLOWED", "Spot orders cannot be modified.");
@@ -389,8 +400,10 @@ function checkSpotLegs(legs: OrderLeg[], actionType: string, wire: Wire | undefi
   for (const leg of legs) {
     if (!leg.spot) continue;
     if (leg.isTrigger || leg.reduceOnly) add("SPOT_NOT_ALLOWED", "Spot orders must be plain orders (no triggers, no reduce-only).");
-    // Market intents (no limit price) compile to IOC; wire and limit intents must say IOC.
-    else if (!(leg.price === undefined || leg.tif === "Ioc")) add("SPOT_NOT_ALLOWED", "Spot orders must be immediate-or-cancel.");
+    // Market intents (no limit price) compile to IOC; wire and limit intents must say IOC unless spot trading is on.
+    else if (leg.price === undefined) continue;
+    else if (!trading && leg.tif !== "Ioc") add("SPOT_NOT_ALLOWED", "Spot orders must be immediate-or-cancel.");
+    else if (trading && !SPOT_TRADING_TIFS.has(leg.tif)) add("SPOT_NOT_ALLOWED", "Spot limits must be good-till-canceled, immediate-or-cancel or post-only.");
   }
 }
 
