@@ -36,6 +36,8 @@ export interface ChaseConfig {
   atLimit?: "rest" | "cancel";
   /** After this long, whatever is left is sent as an IOC at the limit (or at the best opposite price). */
   timeLimitMs?: number;
+  /** Minimum time between re-prices; default {@link CHASE_MIN_REPRICE_MS} (the server re-prices more slowly). */
+  minRepriceMs?: number;
 }
 
 /** What happened so far (kept by the runner). */
@@ -113,7 +115,8 @@ export function nextChaseStep(config: ChaseConfig, state: ChaseState, book: Chas
   const limit = chaseLimitPrice(config, state.startPrice ?? (buy ? bestBid : bestAsk));
   const limitPx = limit !== undefined ? roundPriceToTick(limit, config.szDecimals, kind, buy ? "down" : "up") : undefined;
   const since = state.lastActionAt ?? open?.placedAt;
-  const paced = since !== undefined && now - since < CHASE_MIN_REPRICE_MS ? since + CHASE_MIN_REPRICE_MS : undefined;
+  const pace = Math.max(CHASE_MIN_REPRICE_MS, config.minRepriceMs ?? CHASE_MIN_REPRICE_MS);
+  const paced = since !== undefined && now - since < pace ? since + pace : undefined;
 
   if (config.timeLimitMs !== undefined && now - state.startedAt >= config.timeLimitMs) {
     // Take what the limit allows: at the limit, or the best opposite price when there is no limit.
