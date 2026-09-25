@@ -20,6 +20,7 @@ export function canonicalPolicyJson(policyInput: PolicyInput | Policy): string {
     allowedCoins: p.allowedCoins === "*" ? "*" : [...new Set(p.allowedCoins)].sort(),
     allowedVaultAddresses: [...new Set(p.allowedVaultAddresses.map((a) => a.toLowerCase()))].sort(),
     ...(p.allowedOrigins ? { allowedOrigins: [...new Set(p.allowedOrigins)].sort() } : {}),
+    ...(p.allowedSpotCoins ? { allowedSpotCoins: [...new Set(p.allowedSpotCoins)].sort() } : {}),
   };
   return stableStringify(normalized);
 }
@@ -163,6 +164,8 @@ export function summarizePolicy(policyInput: PolicyInput | Policy): string {
     `max ${p.maxOrdersPerMinute} orders/min`,
     `price band ${p.priceBandPct}%`,
     p.requiredBuilder ? `builder ${p.requiredBuilder.b} (${p.requiredBuilder.f / 10} bps)` : "no builder requirement",
+    ...(p.allowedSpotCoins?.length ? [`spot conversions: ${[...p.allowedSpotCoins].sort().join(", ")}`] : []),
+    ...(p.referralCode !== undefined ? [`referral code ${p.referralCode} only`] : []),
     "cannot withdraw or transfer",
   ].join("; ");
 }

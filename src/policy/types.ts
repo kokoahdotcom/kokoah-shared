@@ -16,6 +16,8 @@ export const ALLOWLISTABLE_ACTION_TYPES = [
   "topUpIsolatedOnlyMargin",
   "scheduleCancel",
   "noop",
+  /** HL's fee trial (`{type:"startFeeTrial"}`): the master account only. */
+  "startFeeTrial",
 ] as const;
 export type AllowlistableActionType = (typeof ALLOWLISTABLE_ACTION_TYPES)[number];
 
@@ -51,9 +53,13 @@ export type PolicyViolationCode =
   | "DAILY_LOSS_LOCKED"
   | "ORDER_RATE_EXCEEDED"
   | "BUILDER_REQUIRED"
-  | "BUILDER_MISMATCH";
+  | "BUILDER_MISMATCH"
+  | "SPOT_NOT_ALLOWED";
 
-/** Hard-denied action types and the code each is denied with. Never signable by a Kokoah agent key. */
+/**
+ * Hard-denied action types and the code each is denied with. Never signable by a Kokoah agent key, with one exception:
+ * `setReferrer` carrying exactly the policy's `referralCode` (see `evaluatePolicy`).
+ */
 export const DENIED_ACTION_TYPES: Readonly<Record<string, PolicyViolationCode>> = Object.freeze({
   withdraw3: "WITHDRAWAL_DENIED",
   cWithdraw: "WITHDRAWAL_DENIED",
@@ -113,7 +119,7 @@ export const DENIED_MESSAGES: Readonly<Partial<Record<PolicyViolationCode, strin
   TRANSFER_DENIED: "Kokoah trading keys can never transfer funds.",
   VAULT_ACTION_DENIED: "Vault deposits, withdrawals and vault creation are not allowed for trading keys.",
   SUBACCOUNT_ACTION_DENIED: "Sub-account creation and changes are not allowed for trading keys.",
-  REFERRER_ACTION_DENIED: "Setting a referrer is not allowed for trading keys.",
+  REFERRER_ACTION_DENIED: "Setting a referrer is not allowed for trading keys, except Kokoah's own referral code.",
   RATE_LIMIT_PURCHASE_DENIED: "Buying request weight is not allowed for trading keys (it spends account funds).",
   APPROVAL_DENIED: "Approvals must be signed by the main wallet, never by a trading key.",
   ACCOUNT_CONFIG_DENIED: "Account configuration changes are not allowed for trading keys.",

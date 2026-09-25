@@ -7,6 +7,9 @@ import * as v from "valibot";
 import { AddressSchema, CoinSchema, INTENT_ORIGINS } from "../intents/index.js";
 import { ALLOWLISTABLE_ACTION_TYPES } from "./types.js";
 
+/** A Hyperliquid referral code as `setReferrer` carries it (1–20 of A–Z a–z 0–9 _ -). */
+export const ReferralCodeSchema = v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{1,20}$/, "Referral code must be 1-20 of A-Z a-z 0-9 _ -"));
+
 /** Current policy schema version. */
 export const POLICY_VERSION = 1;
 
@@ -49,6 +52,17 @@ export const PolicySchema = v.strictObject({
   allowedOrigins: v.optional(v.pipe(v.array(v.picklist(INTENT_ORIGINS)), v.minLength(1))),
   /** Reduce-only orders don't count toward notional caps (so protection and closes always work). Default true. */
   exemptReduceOnlyFromNotionalCaps: v.optional(v.boolean(), true),
+  /**
+   * Spot pairs (HL coin names such as `@166`) the key may trade, with single IOC orders only (Kokoah's Convert uses
+   * the stablecoin pairs, see `STABLECOIN_PAIRS`). Omitted or empty: every spot order is denied. Spot sells must carry
+   * `requiredBuilder`; spot buys carry no builder (Hyperliquid charges builder fees on spot sells only).
+   */
+  allowedSpotCoins: v.optional(v.pipe(v.array(CoinSchema), v.maxLength(50))),
+  /**
+   * The one referral code `setReferrer` may carry (Kokoah's own Hyperliquid code). Omitted: `setReferrer` stays
+   * hard-denied. Signers that allow it must also make sure it is signed at most once per account.
+   */
+  referralCode: v.optional(ReferralCodeSchema),
 });
 
 /** A validated policy. */

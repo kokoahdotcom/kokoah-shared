@@ -58,6 +58,8 @@ C8 = "0x6b6f0101000000000000000000000008"
 # Asset ids from the mainnet fixture (test/fixtures/mainnet-allPerpMetas.json).
 BTC, ETH, SOL, KPEPE, HYPE = 0, 1, 5, 15, 159
 XYZ_SP500 = 100000 + 1 * 10000 + 52
+# Spot: 10000 + spotMeta index (test/fixtures/mainnet-spotMeta.json): @166 is USDT0/USDC.
+USDT0_USDC = 10000 + 166
 
 wallet_a = eth_account.Account.from_key(KEY_A)
 wallet_b = eth_account.Account.from_key(KEY_B)
@@ -336,6 +338,27 @@ user_signed(
     sign_user_set_abstraction_action,
     False,
 )
+
+# Convert stablecoins: a spot IOC buy carries no builder (Hyperliquid charges builder fees on spot sells only); a sell
+# carries it. Same order helpers as above.
+l1(
+    "spot_stablecoin_buy_no_builder_mainnet",
+    order_wires_to_order_action([wire(USDT0_USDC, True, 25.0, 1.0005, {"limit": {"tif": "Ioc"}}, cloid=C1)]),
+    True,
+    expires_after=EXPIRES_AFTER,
+)
+l1(
+    "spot_stablecoin_sell_builder_testnet",
+    order_wires_to_order_action(
+        [wire(USDT0_USDC, False, 12.5, 0.9995, {"limit": {"tif": "Ioc"}}, cloid=C2)], {"b": BUILDER, "f": 25}
+    ),
+    False,
+    expires_after=EXPIRES_AFTER,
+)
+
+# setReferrer, exactly as Exchange.set_referrer builds it (an L1 action: agent keys can sign it).
+l1("set_referrer_mainnet", {"type": "setReferrer", "code": "KOKOAH"}, True, expires_after=EXPIRES_AFTER)
+l1("set_referrer_testnet", {"type": "setReferrer", "code": "KOKOAH"}, False)
 
 # Same scheme with a different signatureChainId (Arbitrum One, 0xa4b1), bypassing the SDK's 0x66eee default.
 custom = {

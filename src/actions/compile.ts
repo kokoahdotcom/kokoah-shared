@@ -15,6 +15,7 @@
  * - Attached TP/SL legs use grouping `normalTpsl`: children are reduce-only, opposite side, same size as the parent.
  * - Sizes and prices must already be valid for the market (the UI shows the rounded values); the compiler rejects
  *   anything it would have to round, instead of silently signing a different number.
+ * - The builder goes on every order action except a spot buy: Hyperliquid charges builder fees on spot sells only.
  *
  * @module
  */
@@ -283,7 +284,8 @@ function compileOrder(intent: OrderIntent, options: CompileOptions): Omit<Compil
     cloids.push(legCloid);
   }
   const grouping = orders.length > 1 ? "normalTpsl" : intent.positionTpsl ? "positionTpsl" : "na";
-  const builder = resolveBuilder(options.builder, market);
+  // Hyperliquid charges builder fees on spot sells only, so a spot buy carries no builder field.
+  const builder = market.kind === "spot" && isBuy ? undefined : resolveBuilder(options.builder, market);
   const raw = { type: "order" as const, orders, grouping, ...(builder ? { builder } : {}) };
   const action = canonical(OrderRequest.entries.action, raw);
   return marketOrder ? { action, cloids, marketOrder } : { action, cloids };

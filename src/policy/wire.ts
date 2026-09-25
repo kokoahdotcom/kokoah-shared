@@ -112,8 +112,22 @@ export function wireActionProblems(w: Rec): string[] {
       break;
     case "noop":
       break;
+    case "setReferrer":
+      if (!(typeof w.code === "string" && /^[A-Za-z0-9_-]{1,20}$/.test(w.code))) p.push("setReferrer needs a code of 1-20 of A-Z a-z 0-9 _ -");
+      p.push(...extraKeys(w, ["type", "code"]));
+      break;
+    case "startFeeTrial":
+      p.push(...extraKeys(w, ["type"]));
+      break;
     default:
       break;
   }
   return p;
+}
+
+/** Problems for keys of `w` outside `allowed` (actions whose exact shape is small and fixed). */
+function extraKeys(w: Rec, allowed: readonly string[]): string[] {
+  return Object.keys(w)
+    .filter((k) => !allowed.includes(k))
+    .map((k) => `${String(w.type)}: unexpected key "${k}"`);
 }

@@ -5,3 +5,4 @@
  */
 export * from "./cloid.js";
 export * from "./compile.js";
+export * from "./account.js";

@@ -12,6 +12,7 @@ import {
   buildApproveBuilderFee,
   buildSendAsset,
   buildWithdraw,
+  compileAccountAction,
   compileAction,
   getNetworkConfig,
   hashL1Action,
@@ -198,6 +199,17 @@ describe("compileAction produces the exact wire actions the Python SDK signs", (
       },
     },
     { name: "noop_mainnet", intent: { kind: "noop", origin: "manual" } },
+    // Convert stablecoins: the builder is configured, and the compiler leaves it off the spot buy.
+    {
+      name: "spot_stablecoin_buy_no_builder_mainnet",
+      intent: { kind: "order", coin: "@166", side: "buy", orderType: "limit", tif: "Ioc", size: "25", price: "1.0005", cloid: C(1), origin: "manual" },
+      builderF: 25,
+    },
+    {
+      name: "spot_stablecoin_sell_builder_testnet",
+      intent: { kind: "order", coin: "@166", side: "sell", orderType: "limit", tif: "Ioc", size: "12.50", price: "0.9995", cloid: C(2), origin: "manual" },
+      builderF: 25,
+    },
   ];
   for (const c of cases) {
     it(c.name, async () => {
@@ -216,6 +228,24 @@ describe("compileAction produces the exact wire actions the Python SDK signs", (
         action: compiled.action,
         nonce: v.nonce,
         vaultAddress: compiled.vaultAddress,
+        expiresAfter: v.expiresAfter ?? undefined,
+      });
+      sameSig(sig, v.signature);
+    });
+  }
+});
+
+describe("compileAccountAction produces the exact setReferrer the Python SDK signs", () => {
+  for (const name of ["set_referrer_mainnet", "set_referrer_testnet"]) {
+    it(name, async () => {
+      const v = vec(name);
+      const compiled = compileAccountAction({ kind: "setReferrer", origin: "manual" }, { referralCode: "KOKOAH" });
+      expect(JSON.stringify(compiled.action)).toBe(JSON.stringify(v.action));
+      const sig = await signL1Action({
+        wallet: privateKeyToAccount(v.privateKey),
+        network: { isTestnet: !v.isMainnet },
+        action: compiled.action as unknown as Record<string, unknown>,
+        nonce: v.nonce,
         expiresAfter: v.expiresAfter ?? undefined,
       });
       sameSig(sig, v.signature);

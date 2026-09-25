@@ -274,6 +274,15 @@ Other rules:
 - Always-place modifies (`a: true`) are refused when a builder is required (they would place orders without it).
 - A wire subject's `origin` is self-declared; `allowedOrigins` is only meaningful for intents and compiled subjects
   built by the signer itself.
+- Spot is denied unless the pair is in `allowedSpotCoins` (Convert's stablecoin pairs, `STABLECOIN_PAIRS`, which
+  signers check against the `spotMeta` they fetch with `verifiedStablecoinPairs`). Even then only one plain IOC
+  order: no modify, trigger, reduce-only or TP/SL grouping. Spot sells carry `requiredBuilder`; spot buys carry no
+  builder (Hyperliquid charges builder fees on spot sells only; `compileAction` leaves it off). Spot legs skip the
+  leverage, stop-loss and loss-lock rules (perp exposure) but count toward notional and rate limits.
+- `setReferrer` stays hard-denied unless the policy names `referralCode`; then only a raw wire subject carrying exactly
+  that code, for the master account, passes (the signer must also make sure it is signed once). `startFeeTrial` is
+  allow-listable and master-only. Build both with `compileAccountAction` (`@kokoah/shared/actions`), whose intents
+  carry no parameters: the referral code comes from the signer's own configuration.
 
 ### `errors`
 `mapHlError(text)` → `{ code, title, message, retryable, category, raw, hlType?, details? }`, `mapOrderStatus(status)`,
@@ -451,7 +460,7 @@ function prepareL1Request(p: { wallet; network: NetworkConfig; compiled: { actio
 type Policy = {
   version: 1;
   allowedActionTypes: Array<"order" | "cancel" | "cancelByCloid" | "modify" | "batchModify" | "updateLeverage"
-    | "updateIsolatedMargin" | "topUpIsolatedOnlyMargin" | "scheduleCancel" | "noop">;
+    | "updateIsolatedMargin" | "topUpIsolatedOnlyMargin" | "scheduleCancel" | "noop" | "startFeeTrial">;
   allowedCoins: "*" | string[];
   maxOrderNotionalUsd: number;
   maxDailyNotionalUsd: number;
@@ -465,6 +474,8 @@ type Policy = {
   maxExpiresAfterWindowMs: number | null;            // non-null ⇒ expiresAfter required and ≤ now + window
   allowedOrigins?: IntentOrigin[];
   exemptReduceOnlyFromNotionalCaps: boolean;         // default true
+  allowedSpotCoins?: string[];                       // spot pairs (IOC only); omitted = no spot
+  referralCode?: string;                             // the one code setReferrer may carry; omitted = denied
 };
 
 function evaluatePolicy(subject: ActionIntent | { kind: "compiled"; compiled: CompiledAction; expiresAfter? }

@@ -1,11 +1,15 @@
 /**
  * Policy evaluation. Deny by default:
  * 1. hard-denied types (fund movements, vault/sub-account admin, approvals, referrer, rate-limit purchase, account
- *    config, TWAP) are denied with a specific code even if a policy lists them;
+ *    config, TWAP) are denied with a specific code even if a policy lists them. One exception: `setReferrer` carrying
+ *    exactly the policy's `referralCode`, for the main account (a raw wire action only);
  * 2. anything not in the policy's allow-list is denied;
  * 3. per-action limits: coins, notional, daily notional, leverage, stop-loss requirement, orders per minute,
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
- *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock.
+ *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock;
+ * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain IOC order, with the builder on
+ *    sells and none on buys (Hyperliquid charges builder fees on spot sells only). Spot legs are exempt from the
+ *    leverage, stop-loss and loss-lock rules, which are about perp exposure.
  *
  * Research basis: agents can sign `vaultTransfer`, `createVault` (10k USDC fee), `createSubAccount`, … (research B
  * §1.7, §1.8), so the signer must decode and check the structured action before hashing.
@@ -14,6 +18,7 @@
  */
 import type { CompiledAction } from "../actions/compile.js";
 import type { ActionIntent, IntentOrigin } from "../intents/index.js";
+import { decodeAssetId, parseCoin } from "../markets/assetIds.js";
 import type { MarketRegistry } from "../markets/registry.js";
 import { checkLimitPriceBand, checkTriggerPriceBand, type LimitTif, triggerLimitBandProblem } from "./band.js";
 import type { Policy } from "./schema.js";
@@ -93,6 +98,8 @@ interface OrderLeg {
   isTrigger: boolean;
   tpsl?: "tp" | "sl";
   reduceOnly: boolean;
+  /** A spot market (asset id 10000–99999, or a spot coin name on intents). */
+  spot: boolean;
   /** Market intents: slippage in bps. */
   slippageBps?: number;
   /** Limit orders: time in force (intents default to GTC). */
@@ -151,14 +158,16 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
   }
   const actionType = wire?.type ?? intentActionType(intent as ActionIntent);
 
-  // 1. Hard denies (own properties only: "__proto__", "constructor", … are not action types).
-  if (Object.hasOwn(DENIED_ACTION_TYPES, actionType)) {
+  // 1. Hard denies (own properties only: "__proto__", "constructor", … are not action types). `setReferrer` goes on to
+  // the checks below only when the policy names Kokoah's code and the subject is the raw wire action.
+  const referrer = actionType === "setReferrer" && policy.referralCode !== undefined && subject.kind === "wire";
+  if (Object.hasOwn(DENIED_ACTION_TYPES, actionType) && !referrer) {
     const denied = DENIED_ACTION_TYPES[actionType] as PolicyViolationCode;
     add(denied, DENIED_MESSAGES[denied] ?? `Action "${actionType}" is never allowed.`);
     return deny(actionType);
   }
-  // 2. Allow-list.
-  if (!(policy.allowedActionTypes as readonly string[]).includes(actionType)) {
+  // 2. Allow-list (the policy's `referralCode` is what allows `setReferrer`).
+  if (!referrer && !(policy.allowedActionTypes as readonly string[]).includes(actionType)) {
     add("ACTION_TYPE_NOT_ALLOWED", `Action "${actionType}" is not allowed by this policy.`);
     return deny(actionType);
   }
@@ -214,6 +223,13 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
     case "batchModify":
       // "a: true" (always place) places the new order even when nothing was cancelled — an order without a builder.
       if (policy.requiredBuilder && wire?.a === true) add("BUILDER_REQUIRED", "Always-place modifies would place orders without the Kokoah builder code.");
+      break;
+    case "setReferrer":
+      if (wire?.code !== policy.referralCode) add("REFERRER_ACTION_DENIED", "Only Kokoah's own referral code can be set.");
+      if (vaultAddress !== undefined) add("REFERRER_ACTION_DENIED", "A referrer can only be set for the main account.");
+      break;
+    case "startFeeTrial":
+      if (vaultAddress !== undefined) add("VAULT_NOT_ALLOWED", "The fee trial can only be started for the main account.");
       break;
     default:
       break;
@@ -297,7 +313,7 @@ function checkOrderLegs(legs: OrderLeg[], actionType: string, wire: Wire | undef
       for (const p of check.problems) add("PRICE_OUTSIDE_BAND", p);
     }
     // Leverage of the market, when known.
-    const lev = context.leverageByCoin?.[leg.coin];
+    const lev = leg.spot ? undefined : context.leverageByCoin?.[leg.coin];
     if (!leg.reduceOnly && lev !== undefined && !(lev <= policy.maxLeverage)) {
       add("LEVERAGE_EXCEEDED", `${leg.coin} is set to ${lev}x, above the policy maximum of ${policy.maxLeverage}x.`);
     }
@@ -308,8 +324,8 @@ function checkOrderLegs(legs: OrderLeg[], actionType: string, wire: Wire | undef
       `Daily notional would reach $${fmt(context.dailyNotionalUsedUsd + actionNotional)}, above the $${fmt(policy.maxDailyNotionalUsd)} limit.`,
     );
   }
-  // New exposure: non-reduce-only orders, including modifies (which can rewrite any resting order).
-  const entries = legs.filter((l) => !l.reduceOnly && l.coin !== undefined);
+  // New exposure: non-reduce-only perp orders, including modifies (which can rewrite any resting order).
+  const entries = legs.filter((l) => !l.reduceOnly && l.coin !== undefined && !l.spot);
   if (entries.length > 0) {
     if (context.lossLockActive) add("DAILY_LOSS_LOCKED", "The daily loss lock is active: only closing and reducing orders are allowed.");
     if (policy.requireStopLossForNewEntries) {
@@ -328,13 +344,42 @@ function checkOrderLegs(legs: OrderLeg[], actionType: string, wire: Wire | undef
   if (!(context.ordersInLastMinute + legs.length <= policy.maxOrdersPerMinute)) {
     add("ORDER_RATE_EXCEEDED", `More than ${policy.maxOrdersPerMinute} orders per minute.`);
   }
-  // Builder (order actions; modify actions carry no builder field).
+  if (legs.some((l) => l.spot)) checkSpotLegs(legs, actionType, wire, policy, add);
+  // Builder (order actions; modify actions carry no builder field). Spot buys carry none: Hyperliquid charges builder
+  // fees on spot sells only.
   if (policy.requiredBuilder && wire?.type === "order") {
     const b = wire.builder as { b?: string; f?: number } | undefined;
-    if (!b) add("BUILDER_REQUIRED", "Orders must carry the Kokoah builder code.");
+    if (legs.length > 0 && legs.every((l) => l.spot && l.isBuy)) {
+      if (b !== undefined) add("BUILDER_MISMATCH", "Spot buys carry no builder fee (Hyperliquid charges it on spot sells only).");
+    } else if (!b) add("BUILDER_REQUIRED", "Orders must carry the Kokoah builder code.");
     else if (b.b?.toLowerCase() !== policy.requiredBuilder.b || b.f !== policy.requiredBuilder.f) {
       add("BUILDER_MISMATCH", `Builder must be ${policy.requiredBuilder.b} with f=${policy.requiredBuilder.f}.`);
     }
+  }
+}
+
+/**
+ * Spot: only pairs in `allowedSpotCoins` (Convert's stablecoin pairs), and only as one plain IOC order: no modify, no
+ * triggers, no reduce-only, no TP/SL grouping. Spot trading beyond that is a separate, later decision.
+ */
+function checkSpotLegs(legs: OrderLeg[], actionType: string, wire: Wire | undefined, policy: Policy, add: AddFn): void {
+  const allowed = policy.allowedSpotCoins ?? [];
+  for (const leg of legs) {
+    if (!leg.spot || leg.coin === undefined) continue;
+    if (!allowed.includes(leg.coin)) add("SPOT_NOT_ALLOWED", `${leg.coin}: spot trading is not available; only stablecoin conversions on listed pairs are.`);
+  }
+  if (actionType !== "order") {
+    add("SPOT_NOT_ALLOWED", "Spot orders cannot be modified.");
+    return;
+  }
+  if (legs.length !== 1) add("SPOT_NOT_ALLOWED", "A spot order must be a single order.");
+  const grouping = wire?.grouping;
+  if (grouping !== undefined && grouping !== "na") add("SPOT_NOT_ALLOWED", "A spot order cannot carry TP/SL grouping.");
+  for (const leg of legs) {
+    if (!leg.spot) continue;
+    if (leg.isTrigger || leg.reduceOnly) add("SPOT_NOT_ALLOWED", "Spot orders must be plain orders (no triggers, no reduce-only).");
+    // Market intents (no limit price) compile to IOC; wire and limit intents must say IOC.
+    else if (!(leg.price === undefined || leg.tif === "Ioc")) add("SPOT_NOT_ALLOWED", "Spot orders must be immediate-or-cancel.");
   }
 }
 
@@ -401,6 +446,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         ...(trig ? { tpsl: trig.tpsl } : {}),
         ...(tif !== undefined ? { tif } : {}),
         reduceOnly: w.r,
+        spot: isSpotAsset(w.a),
       };
     });
   }
@@ -417,6 +463,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
       isTrigger,
       ...(isTrigger ? { tpsl: tpslOf(intent.orderType) } : {}),
       reduceOnly: intent.reduceOnly,
+      spot: isSpotCoin(intent.coin),
       ...(intent.orderType === "market" ? { slippageBps: intent.slippageBps ?? 100 } : {}),
       ...(intent.orderType === "limit" ? { tif: intent.tif ?? "Gtc" } : {}),
     };
@@ -436,6 +483,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         isTrigger: true,
         tpsl,
         reduceOnly: true,
+        spot: parent.spot,
       });
     }
     return legs;
@@ -453,10 +501,24 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         isTrigger,
         ...(isTrigger ? { tpsl: tpslOf(o.orderType) } : { tif: o.tif ?? "Gtc" }),
         reduceOnly: o.reduceOnly,
+        spot: isSpotCoin(o.coin),
       },
     ];
   }
   return [];
+}
+
+function isSpotAsset(assetId: number): boolean {
+  try {
+    return decodeAssetId(assetId).kind === "spot";
+  } catch {
+    return false;
+  }
+}
+
+function isSpotCoin(coin: string): boolean {
+  const kind = parseCoin(coin)?.kind;
+  return kind === "spotIndex" || kind === "spotPair";
 }
 
 function fmt(x: number): string {

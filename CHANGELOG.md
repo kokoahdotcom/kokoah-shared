@@ -7,6 +7,21 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `actions`: `compileAccountAction` with `AccountIntentSchema` (`setReferrer`, `startFeeTrial`; no parameters, manual
+  origin only; the referral code comes from the signer's configuration), `safeParseAccountIntent`,
+  `isAccountIntentKind`. `setReferrer` is checked against new Python SDK golden vectors.
+- `policy`: `allowedSpotCoins` (spot pairs a key may trade, single IOC orders only; default none) and `referralCode`
+  (the one code `setReferrer` may carry), both optional, so existing policies and their hashes are unchanged.
+  `startFeeTrial` is allow-listable (master account only). New violation code `SPOT_NOT_ALLOWED`.
+- `policy`: `STABLECOIN_PAIRS` (stablecoin/USDC pairs pinned per network from `spotMeta`), `stablecoinPairCoins` and
+  `verifiedStablecoinPairs` (checks a live `spotMeta` against the pins, failing closed).
+
+### Changed
+- `evaluatePolicy`: spot orders are denied unless listed in `allowedSpotCoins` (before, a spot coin passed with
+  `allowedCoins: "*"` when the registry had spot markets). Spot sells need the exact builder; spot buys must carry
+  none. `setReferrer` with exactly the policy's `referralCode` is the one exception to the hard deny.
+- `compileAction`: spot buys carry no builder field (Hyperliquid charges builder fees on spot sells only); checked
+  against new Python SDK golden vectors.
 - `signing`: `buildSendAsset` (readable `HyperliquidTransaction:SendAsset` for the main wallet; `fromSubAccount` is
   the main account unless given) and `buildAccountMode` (`userSetAbstraction`, Standard or Unified; `ACCOUNT_MODES`,
   `AccountMode`), both checked against new Python SDK golden vectors.
