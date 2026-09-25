@@ -82,6 +82,11 @@ export interface DcaStepInput {
   orders: Readonly<Record<string, BotOrderView>>;
   cloid: (seq: number) => `0x${string}`;
   maxNewOrders: number;
+  /**
+   * Position value the account may still add under the bot's leverage cap (`maxLeverage × equity − total position
+   * value`). A recurring order above it is skipped for this interval; safety orders above it wait.
+   */
+  entryRoomUsd?: number;
 }
 
 const terminal = (o: BotOrderView | undefined) => !!o && o.status !== "pending" && o.status !== "open";
@@ -153,10 +158,17 @@ export function dcaStep(input: DcaStepInput): PlannerStep<DcaState> {
   }
 
   // The recurring order.
+  let room = input.entryRoomUsd ?? Infinity;
   const lastDone = !state.lastCloid || terminal(input.orders[state.lastCloid]);
   if (!exhausted && now >= state.nextAt && lastDone && budget > 0) {
     const size = sizeForUsd(c.orderSizeUsd, mark, szDecimals, "down");
     const usable = meetsMinimum(size, mark) ? size : sizeForUsd(MIN_ORDER_NOTIONAL_USD * 1.001, mark, szDecimals, "up");
+    if (Number(usable) * mark > room) {
+      state.nextAt = state.nextAt + intervalMs > now ? state.nextAt + intervalMs : now + intervalMs;
+      notes.push(`Skipped this interval's order: it would take the account above ${c.maxLeverage}× leverage.`);
+      return { state, place, cancel, notes };
+    }
+    room -= Number(usable) * mark;
     const cloid = input.cloid(state.seq++);
     state.lastCloid = cloid;
     state.ordersPlaced += 1;
@@ -184,6 +196,9 @@ export function dcaStep(input: DcaStepInput): PlannerStep<DcaState> {
       const price = tickPrice(s.price, szDecimals, c.side === "buy" ? "down" : "up");
       const size = sizeForUsd(s.usd, Number(price), szDecimals, "down");
       if (!meetsMinimum(size, Number(price))) continue;
+      // A safety order that would break the leverage cap if it filled waits (and the rest after it).
+      if (Number(size) * Number(price) > room) break;
+      room -= Number(size) * Number(price);
       const cloid = input.cloid(state.seq++);
       state.safety[String(s.index)] = cloid;
       place.push({ cloid, coin: c.coin, side: c.side, size, type: "limit", price, reduceOnly: false, label: `Safety order ${s.index}`, level: s.index });

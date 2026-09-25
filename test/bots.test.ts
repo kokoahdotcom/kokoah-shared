@@ -271,6 +271,18 @@ describe("dca", () => {
     expect(done.stop).toMatchObject({ finished: true, closePosition: false });
   });
 
+  it("skips orders above the leverage room", () => {
+    const c = dca({ safety: { count: 2, stepPct: 5, sizeMultiplier: 1, maxTotalUsd: 100 } });
+    const skipped = dcaStep({ config: c, state: null, now: NOW, mark: 100_000, szDecimals: 5, position: { size: 0, entryPrice: 0 }, orders: {}, cloid, maxNewOrders: 10, entryRoomUsd: 5 });
+    expect(skipped.place).toHaveLength(0);
+    expect(skipped.notes[0]).toMatch(/above 2× leverage/);
+    expect(skipped.state.ordersPlaced).toBe(0);
+    expect(skipped.state.nextAt).toBe(NOW + 3_600_000);
+    const partial = dcaStep({ config: c, state: null, now: NOW, mark: 100_000, szDecimals: 5, position: { size: 0, entryPrice: 0 }, orders: {}, cloid, maxNewOrders: 10, entryRoomUsd: 45 });
+    expect(partial.place.map((o) => o.label)).toEqual(["Order 1", "Safety order 1"]);
+    expect(partial.state.safetyPlanned).toBe(false);
+  });
+
   it("raises tiny orders to the exchange minimum", () => {
     const s = dcaStep({ config: dca({ orderSizeUsd: 10 }), state: null, now: NOW, mark: 99_999, szDecimals: 5, position: { size: 0, entryPrice: 0 }, orders: {}, cloid, maxNewOrders: 1 });
     expect(Number(s.place[0]!.size) * 99_999).toBeGreaterThanOrEqual(10);
