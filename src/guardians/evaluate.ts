@@ -71,6 +71,8 @@ export interface GuardianOrder {
   filledSize: number;
   /** Trigger price of trigger (stop / take-profit) orders. Needed so rules never loosen an existing stop. */
   triggerPrice?: number;
+  /** Limit price, when known (a chase taken over by the server keeps its price). */
+  limitPrice?: number;
 }
 
 /** Account, positions and orders. */
