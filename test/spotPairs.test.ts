@@ -100,3 +100,13 @@ describe("spot order volume cap", () => {
     expect(spotOrderVolumeProblem({ network: "testnet", label: "PURR/USDC", notionalUsd: 1_000_000, dayVolumeUsd: 0 })).toBe("");
   });
 });
+
+describe("policies listing every pinned pair", () => {
+  it("accept all stablecoin and verified pairs of a network in allowedSpotCoins", async () => {
+    const { createManualTradingPolicy } = await import("../src/policy/index.js");
+    const coins = [...STABLECOIN_PAIRS.mainnet, ...VERIFIED_SPOT_PAIRS.mainnet].map((p) => p.coin);
+    expect(coins.length).toBeGreaterThan(50);
+    const p = createManualTradingPolicy({ builder: null, overrides: { allowedSpotCoins: coins, spotTrading: true } });
+    expect(p.allowedSpotCoins).toHaveLength(coins.length);
+  });
+});

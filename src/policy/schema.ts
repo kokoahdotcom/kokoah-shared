@@ -63,7 +63,7 @@ export const PolicySchema = v.strictObject({
    * the stablecoin pairs, see `STABLECOIN_PAIRS`). Omitted or empty: every spot order is denied. Spot sells must carry
    * `requiredBuilder`; spot buys carry no builder (Hyperliquid charges builder fees on spot sells only).
    */
-  allowedSpotCoins: v.optional(v.pipe(v.array(CoinSchema), v.maxLength(50))),
+  allowedSpotCoins: v.optional(v.pipe(v.array(CoinSchema), v.maxLength(200))),
   /**
    * With `allowedSpotCoins`: the listed pairs may be traded, not only converted. Market orders (IOC) and IOC, GTC and
    * post-only (ALO) limits within the price bands; still one order per action, with no modify, reduce-only, trigger or
