@@ -256,7 +256,8 @@ export function evaluateChaseRule(rule: ChaseRule, market: MarketState, ps: Posi
         canceling: false,
         missingSince: undefined,
         rejections: (st.rejections ?? 0) + (rejected ? 1 : 0),
-        lastActionAt: st.lastActionAt ?? now,
+        // Our own cancel was the re-price: its replacement goes out now. A refusal waits for the pacing.
+        lastActionAt: st.canceling ? undefined : now,
       };
       if (st.ioc) return out({ ...st, ioc: false }, "completed", `Time limit reached: the rest went as IOC; filled ${formatSize(Number(st.filled), m.szDecimals, "down")} ${rule.coin} in all`);
     }

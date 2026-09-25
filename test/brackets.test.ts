@@ -347,7 +347,8 @@ describe("chase rule", () => {
     // Still resting: wait for the cancel.
     expect(evaluateChaseRule(r3, market(99), ps({}, [tabOrder(4, 1.5, 0.6)]), later + 20_000).intents).toEqual([]);
     // Gone, with 0.7 filled in all: the new post-only order is for the rest.
-    const place = evaluateChaseRule(r3, market(99, 99.02), ps({}, [tabOrder(4, 1.5, 0.7, "canceled")]), later + 35_000);
+    // Right after the cancel (no pacing between a cancel and its replacement).
+    const place = evaluateChaseRule(r3, market(99, 99.02), ps({}, [tabOrder(4, 1.5, 0.7, "canceled")]), later + 21_000);
     const [o] = orders(place);
     expect(o).toMatchObject({ side: "sell", orderType: "limit", tif: "Alo", size: "0.8", reduceOnly: true, origin: "guardian" });
     expect(Number(o!.price)).toBeGreaterThanOrEqual(99.02);
