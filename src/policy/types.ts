@@ -16,7 +16,7 @@ export const ALLOWLISTABLE_ACTION_TYPES = [
   "topUpIsolatedOnlyMargin",
   "scheduleCancel",
   "noop",
-  /** HL's fee trial (`{type:"startFeeTrial"}`): the master account only. */
+  /** HL's fee trial (`{type:"startFeeTrial", addBaseRate, crossBaseRate}`): the master account only. */
   "startFeeTrial",
 ] as const;
 export type AllowlistableActionType = (typeof ALLOWLISTABLE_ACTION_TYPES)[number];
@@ -54,7 +54,8 @@ export type PolicyViolationCode =
   | "ORDER_RATE_EXCEEDED"
   | "BUILDER_REQUIRED"
   | "BUILDER_MISMATCH"
-  | "SPOT_NOT_ALLOWED";
+  | "SPOT_NOT_ALLOWED"
+  | "FEE_TRIAL_UNAVAILABLE";
 
 /**
  * Hard-denied action types and the code each is denied with. Never signable by a Kokoah agent key, with one exception:

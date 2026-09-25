@@ -973,6 +973,50 @@
       }
     },
     {
+      "name": "start_fee_trial_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": 1790000015000,
+      "action": {
+        "type": "startFeeTrial",
+        "addBaseRate": "0.00012",
+        "crossBaseRate": "0.0004"
+      },
+      "connectionId": "0x1c152c3080ac345a231822a0720a910a32c4bd22e9d79687a2aebc72de1dd971",
+      "signature": {
+        "r": "0x9c68f9f2e14ea0312766a6e1eb20e39428a084de259edb2ff28158bc1f025969",
+        "s": "0x69ada1ffa7251d178d108fcf94fcbe2e4b50e67b5a980e778d2f6b6aedc21bc9",
+        "v": 27
+      },
+      "note": "raw action (no SDK method); shape from Hyperliquid's app code"
+    },
+    {
+      "name": "start_fee_trial_top_tier_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "startFeeTrial",
+        "addBaseRate": "0.0",
+        "crossBaseRate": "0.00028"
+      },
+      "connectionId": "0x55f021fb5f8d5e94d1c6df019363d3fc7204386056b309585d9a3ceee26bef79",
+      "signature": {
+        "r": "0x9b4d42ef5612769c8378b5c0c34a32961db28873f5ed0eef335d6c692eec809d",
+        "s": "0x61a62723f7ee7014a094aaf149e9558e96d925c0e8afc7243db924fc3b17463e",
+        "v": 28
+      },
+      "note": "raw action (no SDK method); shape from Hyperliquid's app code"
+    },
+    {
       "name": "approve_builder_fee_chain_a4b1_mainnet",
       "kind": "userSigned",
       "isMainnet": true,

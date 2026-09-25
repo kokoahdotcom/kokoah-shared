@@ -280,9 +280,10 @@ Other rules:
   builder (Hyperliquid charges builder fees on spot sells only; `compileAction` leaves it off). Spot legs skip the
   leverage, stop-loss and loss-lock rules (perp exposure) but count toward notional and rate limits.
 - `setReferrer` stays hard-denied unless the policy names `referralCode`; then only a raw wire subject carrying exactly
-  that code, for the master account, passes (the signer must also make sure it is signed once). `startFeeTrial` is
-  allow-listable and master-only. Build both with `compileAccountAction` (`@kokoah/shared/actions`), whose intents
-  carry no parameters: the referral code comes from the signer's own configuration.
+  that code, for the master account, passes (the signer must also make sure it is signed once). `startFeeTrial`
+  (`{type, addBaseRate, crossBaseRate}`) is allow-listable and master-only. Build both with `compileAccountAction`
+  (`@kokoah/shared/actions`): the referral code comes from the signer's own configuration, and the fee trial intent
+  names a VIP tier whose rates the signer takes from the `userFees` fee schedule it read itself.
 
 ### `errors`
 `mapHlError(text)` → `{ code, title, message, retryable, category, raw, hlType?, details? }`, `mapOrderStatus(status)`,

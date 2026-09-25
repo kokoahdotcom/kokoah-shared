@@ -253,6 +253,33 @@ describe("compileAccountAction produces the exact setReferrer the Python SDK sig
   }
 });
 
+describe("compileAccountAction produces the startFeeTrial actions signed with the Python SDK's L1 path", () => {
+  const vip = [
+    { cross: "0.0004", add: "0.00012" },
+    { cross: "0.00035", add: "0.00008" },
+    { cross: "0.0003", add: "0.00004" },
+    { cross: "0.00028", add: "0.0" },
+  ];
+  for (const [name, tier] of [
+    ["start_fee_trial_mainnet", 1],
+    ["start_fee_trial_top_tier_testnet", 4],
+  ] as const) {
+    it(name, async () => {
+      const v = vec(name);
+      const compiled = compileAccountAction({ kind: "startFeeTrial", origin: "manual", tier }, { feeTiers: vip });
+      expect(JSON.stringify(compiled.action)).toBe(JSON.stringify(v.action));
+      const sig = await signL1Action({
+        wallet: privateKeyToAccount(v.privateKey),
+        network: { isTestnet: !v.isMainnet },
+        action: compiled.action as unknown as Record<string, unknown>,
+        nonce: v.nonce,
+        expiresAfter: v.expiresAfter ?? undefined,
+      });
+      sameSig(sig, v.signature);
+    });
+  }
+});
+
 describe("user-signed signatures match the Python SDK", () => {
   function prepare(v: Vector): { prepared: PreparedUserSignedAction; types: Record<string, ReadonlyArray<{ name: string; type: string }>> } {
     const network = getNetworkConfig(v.isMainnet ? "mainnet" : "testnet");

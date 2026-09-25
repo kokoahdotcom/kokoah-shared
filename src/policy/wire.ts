@@ -117,7 +117,11 @@ export function wireActionProblems(w: Rec): string[] {
       p.push(...extraKeys(w, ["type", "code"]));
       break;
     case "startFeeTrial":
-      p.push(...extraKeys(w, ["type"]));
+      for (const k of ["addBaseRate", "crossBaseRate"]) {
+        const r = w[k];
+        if (!(typeof r === "string" && /^-?[0-9]+\.[0-9]{1,8}$/.test(r) && Math.abs(Number(r)) < 1)) p.push(`startFeeTrial needs ${k} as a decimal fraction`);
+      }
+      p.push(...extraKeys(w, ["type", "addBaseRate", "crossBaseRate"]));
       break;
     default:
       break;

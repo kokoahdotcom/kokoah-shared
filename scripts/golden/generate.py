@@ -360,6 +360,22 @@ l1(
 l1("set_referrer_mainnet", {"type": "setReferrer", "code": "KOKOAH"}, True, expires_after=EXPIRES_AFTER)
 l1("set_referrer_testnet", {"type": "setReferrer", "code": "KOKOAH"}, False)
 
+# startFeeTrial: no SDK method yet. The action as Hyperliquid's app builds it (type, addBaseRate, crossBaseRate; rates
+# toFixed(8) with trailing zeros trimmed), signed by the SDK's own L1 signing path.
+l1(
+    "start_fee_trial_mainnet",
+    {"type": "startFeeTrial", "addBaseRate": "0.00012", "crossBaseRate": "0.0004"},
+    True,
+    expires_after=EXPIRES_AFTER,
+    note="raw action (no SDK method); shape from Hyperliquid's app code",
+)
+l1(
+    "start_fee_trial_top_tier_testnet",
+    {"type": "startFeeTrial", "addBaseRate": "0.0", "crossBaseRate": "0.00028"},
+    False,
+    note="raw action (no SDK method); shape from Hyperliquid's app code",
+)
+
 # Same scheme with a different signatureChainId (Arbitrum One, 0xa4b1), bypassing the SDK's 0x66eee default.
 custom = {
     "type": "approveBuilderFee",
