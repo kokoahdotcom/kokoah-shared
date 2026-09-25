@@ -7,6 +7,14 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `policy`: `spotTrading` (optional; with `allowedSpotCoins` the listed pairs may be traded with market orders and IOC,
+  GTC and post-only limits within the price bands, still one order with no modify, trigger, reduce-only or grouping;
+  omitted: Convert's IOC-only rule, so existing policies and hashes are unchanged). `VERIFIED_SPOT_PAIRS` (Hyperliquid's
+  "Strict" spot tokens with a USDC pair, pinned per network: 50 on mainnet, 6 on testnet), `verifiedSpotPairs`
+  (stablecoin and verified pairs a live `spotMeta` confirms exactly, failing closed), `verifiedSpotPairCoins`,
+  `spotPairMatches`, `spotTokenTrust` (`stablecoin` / `verified` / `unverified`, by token id), `USDC_TOKEN`, and the
+  mainnet per-order volume cap for signers (`SPOT_ORDER_MAX_SHARE_OF_DAY_VOLUME` 10%, `spotOrderCapUsd`,
+  `spotOrderVolumeProblem`).
 - `actions`: `compileAccountAction` with `AccountIntentSchema` (`setReferrer`, and `startFeeTrial` naming a VIP tier
   by number; manual origin only; the referral code comes from the signer's configuration and the tier's rates from the
   fee schedule the signer read itself), `feeTrialRate`, `safeParseAccountIntent`, `isAccountIntentKind`. `setReferrer`

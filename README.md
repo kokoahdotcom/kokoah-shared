@@ -274,11 +274,17 @@ Other rules:
 - Always-place modifies (`a: true`) are refused when a builder is required (they would place orders without it).
 - A wire subject's `origin` is self-declared; `allowedOrigins` is only meaningful for intents and compiled subjects
   built by the signer itself.
-- Spot is denied unless the pair is in `allowedSpotCoins` (Convert's stablecoin pairs, `STABLECOIN_PAIRS`, which
-  signers check against the `spotMeta` they fetch with `verifiedStablecoinPairs`). Even then only one plain IOC
-  order: no modify, trigger, reduce-only or TP/SL grouping. Spot sells carry `requiredBuilder`; spot buys carry no
-  builder (Hyperliquid charges builder fees on spot sells only; `compileAction` leaves it off). Spot legs skip the
-  leverage, stop-loss and loss-lock rules (perp exposure) but count toward notional and rate limits.
+- Spot is denied unless the pair is in `allowedSpotCoins` (Convert's stablecoin pairs, `STABLECOIN_PAIRS`, and with
+  spot trading the verified pairs, `VERIFIED_SPOT_PAIRS`; signers check both against the `spotMeta` they fetch with
+  `verifiedSpotPairs`). Even then only one plain order: no modify, trigger, reduce-only or TP/SL grouping. Without
+  `spotTrading` it must be IOC (Convert); with it, market orders and IOC, GTC and post-only limits within the price
+  bands. Spot sells carry `requiredBuilder`; spot buys carry no builder (Hyperliquid charges builder fees on spot
+  sells only; `compileAction` leaves it off). Spot legs skip the leverage, stop-loss and loss-lock rules (perp
+  exposure) but count toward notional and rate limits. On mainnet, signers also cap one order on a verified pair at 10%
+  of its 24 h volume (`spotOrderVolumeProblem`, with the volume they read themselves).
+- `VERIFIED_SPOT_PAIRS` is Hyperliquid's own "Strict" spot list (the base-token ids its app shows by default) with a
+  USDC pair, pinned per network (pair index, token indices, names, token ids). `spotTokenTrust` rates any token by its
+  id: `stablecoin`, `verified` or `unverified` (apps show unverified tokens with a warning; signers refuse them).
 - `setReferrer` stays hard-denied unless the policy names `referralCode`; then only a raw wire subject carrying exactly
   that code, for the master account, passes (the signer must also make sure it is signed once). `startFeeTrial`
   (`{type, addBaseRate, crossBaseRate}`) is allow-listable and master-only. Build both with `compileAccountAction`
@@ -476,6 +482,7 @@ type Policy = {
   allowedOrigins?: IntentOrigin[];
   exemptReduceOnlyFromNotionalCaps: boolean;         // default true
   allowedSpotCoins?: string[];                       // spot pairs (IOC only); omitted = no spot
+  spotTrading?: boolean;                             // with allowedSpotCoins: also GTC/ALO limits (no triggers)
   referralCode?: string;                             // the one code setReferrer may carry; omitted = denied
 };
 

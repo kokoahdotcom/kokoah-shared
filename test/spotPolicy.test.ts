@@ -169,3 +169,83 @@ describe("pinned stablecoin pairs", () => {
     expect(verifiedStablecoinPairs("mainnet", { universe: "x", tokens: [] } as never)).toEqual([]);
   });
 });
+
+describe("spot trading (spotTrading)", () => {
+  // @107 is HYPE/USDC on mainnet. The signer lists only pairs it verified itself (`verifiedSpotPairs`).
+  const trading = (over: Partial<Policy> = {}) => policy({ allowedSpotCoins: [PAIR, "@150", "@107"], spotTrading: true, ...over });
+  const hype = (o: Partial<Record<string, unknown>> = {}): ActionIntentInput =>
+    ({ kind: "order", coin: "@107", side: "buy", orderType: "limit", size: "1", price: "39", tif: "Gtc", origin: "manual", ...o }) as ActionIntentInput;
+
+  it("allow market orders and IOC, GTC and post-only limits within the bands", () => {
+    const c = ctx(trading());
+    for (const intent of [
+      hype({ orderType: "market", price: undefined, tif: undefined, slippageBps: 100 }),
+      hype({ side: "sell", orderType: "market", price: undefined, tif: undefined, slippageBps: 100 }),
+      hype({ tif: "Gtc" }),
+      hype({ tif: "Alo" }),
+      hype({ price: "40.2", tif: "Ioc" }),
+      hype({ side: "sell", price: "41", tif: "Gtc" }),
+      // A resting buy 30% below the market: within the 50% resting band.
+      hype({ price: "28", tif: "Gtc" }),
+    ]) {
+      const r = both(intent, c);
+      expect(r.onCompiled).toEqual({ allowed: true, violations: [], actionType: "order" });
+      expect(r.onWire).toEqual({ allowed: true, violations: [], actionType: "order" });
+    }
+  });
+
+  it("keep the price bands: executes-now within priceBandPct, resting within 50%", () => {
+    const c = ctx(trading());
+    expect(codes(both(hype({ price: "45", tif: "Ioc" }), c).onWire)).toEqual(["PRICE_OUTSIDE_BAND"]);
+    // A marketable GTC buy far above the mark would fill now: the tight band applies.
+    expect(codes(both(hype({ price: "45", tif: "Gtc" }), c).onWire)).toEqual(["PRICE_OUTSIDE_BAND"]);
+    expect(codes(both(hype({ price: "15", tif: "Gtc" }), c).onWire)).toEqual(["PRICE_OUTSIDE_BAND"]);
+    expect(codes(evaluatePolicy(parseActionIntent(hype({ orderType: "market", price: undefined, tif: undefined, slippageBps: 1000 })), ctx(trading({ priceBandPct: 5 }))))).toEqual(["PRICE_OUTSIDE_BAND"]);
+  });
+
+  it("still deny triggers, reduce-only, modifies, several orders and unlisted pairs", () => {
+    const c = ctx(trading());
+    const stop = { kind: "order", coin: "@107", side: "sell", orderType: "stopMarket", triggerPrice: "36", size: "1", origin: "manual" } as ActionIntentInput;
+    expect(codes(evaluatePolicy(parseActionIntent(stop), c))).toContain("SPOT_NOT_ALLOWED");
+    expect(codes(evaluatePolicy(parseActionIntent(hype({ side: "sell", reduceOnly: true })), c))).toContain("SPOT_NOT_ALLOWED");
+    const order = (compiled(hype()).action as unknown as { orders: Array<Record<string, unknown>> }).orders[0]!;
+    const modify = { type: "modify", oid: 1, order };
+    expect(codes(evaluatePolicy({ kind: "wire", action: modify, origin: "manual", expiresAfter: NOW + 15_000 }, c))).toContain("SPOT_NOT_ALLOWED");
+    const two = { type: "order", orders: [order, { ...order, c: "0x6b6f0101000000000000000000000009" }], grouping: "na" };
+    expect(codes(evaluatePolicy({ kind: "wire", action: two, origin: "manual", expiresAfter: NOW + 15_000 }, c))).toEqual(["SPOT_NOT_ALLOWED"]);
+    const front = { type: "order", orders: [{ ...order, t: { limit: { tif: "FrontendMarket" } } }], grouping: "na" };
+    expect(codes(evaluatePolicy({ kind: "wire", action: front, origin: "manual", expiresAfter: NOW + 15_000 }, c))).toEqual(["SPOT_NOT_ALLOWED"]);
+    const unlisted = both(hype(), ctx(trading({ allowedSpotCoins: [PAIR] })));
+    expect(codes(unlisted.onWire)).toEqual(["SPOT_NOT_ALLOWED"]);
+    expect(unlisted.onWire.violations[0]!.message).toBe("@107: this spot pair can't be traded with this key.");
+  });
+
+  it("require the exact builder on sells and none on buys", () => {
+    const c = ctx(trading());
+    const sell = compiled(hype({ side: "sell", price: "41" })).action as unknown as Record<string, unknown>;
+    expect(sell.builder).toEqual(BUILDER);
+    const { builder: _drop, ...bare } = sell;
+    expect(codes(evaluatePolicy({ kind: "wire", action: bare as never, origin: "manual", expiresAfter: NOW + 15_000 }, c))).toEqual(["BUILDER_REQUIRED"]);
+    expect(codes(evaluatePolicy({ kind: "wire", action: { ...sell, builder: { b: BUILDER.b, f: 26 } } as never, origin: "manual", expiresAfter: NOW + 15_000 }, c))).toEqual(["BUILDER_MISMATCH"]);
+    const buy = compiled(hype()).action as unknown as Record<string, unknown>;
+    expect("builder" in buy).toBe(false);
+    expect(codes(evaluatePolicy({ kind: "wire", action: { ...buy, builder: BUILDER } as never, origin: "manual", expiresAfter: NOW + 15_000 }, c))).toEqual(["BUILDER_MISMATCH"]);
+  });
+
+  it("count notional, daily and rate limits", () => {
+    expect(codes(both(hype({ size: "100" }), ctx(trading({ maxOrderNotionalUsd: 1000 }))).onWire)).toEqual(["ORDER_NOTIONAL_EXCEEDED"]);
+    expect(codes(both(hype(), ctx(trading(), { dailyNotionalUsedUsd: 25_000_000 })).onWire)).toEqual(["DAILY_NOTIONAL_EXCEEDED"]);
+    expect(codes(both(hype(), ctx(trading(), { ordersInLastMinute: 60 })).onWire)).toEqual(["ORDER_RATE_EXCEEDED"]);
+  });
+
+  it("without spotTrading, the same pair is IOC-only (Convert rules)", () => {
+    const convertOnly = ctx(trading({ spotTrading: false }));
+    expect(codes(both(hype({ tif: "Gtc" }), convertOnly).onWire)).toEqual(["SPOT_NOT_ALLOWED"]);
+    expect(both(hype({ price: "40.2", tif: "Ioc" }), convertOnly).onWire.allowed).toBe(true);
+  });
+
+  it("put spotTrading in the signed policy hash without changing older hashes", () => {
+    expect(hashPolicy(trading())).not.toBe(hashPolicy(trading({ spotTrading: undefined })));
+    expect(canonicalPolicyJson(policy())).not.toContain("spotTrading");
+  });
+});

@@ -38,6 +38,9 @@ export interface StablecoinPair {
 const USDC_MAINNET: PinnedSpotToken = { name: "USDC", index: 0, tokenId: "0x6d1e7cde53ba9467b783cb7c530ce054" };
 const USDC_TESTNET: PinnedSpotToken = { name: "USDC", index: 0, tokenId: "0xeb62eee3685fc4c43992febcd9e75443" };
 
+/** USDC, the quote token of every pinned pair, by network. */
+export const USDC_TOKEN: Readonly<Record<"mainnet" | "testnet", PinnedSpotToken>> = Object.freeze({ mainnet: USDC_MAINNET, testnet: USDC_TESTNET });
+
 /** Pinned stablecoin pairs by network. */
 export const STABLECOIN_PAIRS: Readonly<Record<"mainnet" | "testnet", readonly StablecoinPair[]>> = Object.freeze({
   mainnet: Object.freeze<StablecoinPair[]>([
@@ -55,10 +58,25 @@ export function stablecoinPairCoins(network: "mainnet" | "testnet"): string[] {
   return STABLECOIN_PAIRS[network].map((p) => p.coin);
 }
 
-function tokenMatches(pinned: PinnedSpotToken, live: SpotMetaLike["tokens"][number] | undefined): boolean {
+type LiveToken = SpotMetaLike["tokens"][number];
+
+function tokenMatches(pinned: PinnedSpotToken, live: LiveToken | undefined): boolean {
   if (!live || live.name !== pinned.name || live.index !== pinned.index) return false;
   const tokenId = (live as { tokenId?: unknown }).tokenId;
   return typeof tokenId === "string" && tokenId.toLowerCase() === pinned.tokenId;
+}
+
+/**
+ * True when the live `spotMeta` confirms `pair` exactly: the same pair index and name, tokens `[base, quote]` in that
+ * order, and each token with the pinned index, name and token id.
+ */
+export function spotPairMatches(pair: StablecoinPair, spotMeta: SpotMetaLike | null | undefined): boolean {
+  if (!spotMeta || !Array.isArray(spotMeta.universe) || !Array.isArray(spotMeta.tokens)) return false;
+  const live = spotMeta.universe.find((u) => u.index === pair.index);
+  if (!live || live.name !== pair.coin || !Array.isArray(live.tokens) || live.tokens.length !== 2) return false;
+  if (live.tokens[0] !== pair.base.index || live.tokens[1] !== pair.quote.index) return false;
+  const tokens = new Map(spotMeta.tokens.map((t) => [t.index, t] as const));
+  return tokenMatches(pair.base, tokens.get(pair.base.index)) && tokenMatches(pair.quote, tokens.get(pair.quote.index));
 }
 
 /**
@@ -67,12 +85,5 @@ function tokenMatches(pinned: PinnedSpotToken, live: SpotMetaLike["tokens"][numb
  * out (fail closed). Pass only a `spotMeta` the caller fetched from Hyperliquid itself.
  */
 export function verifiedStablecoinPairs(network: "mainnet" | "testnet", spotMeta: SpotMetaLike | null | undefined): StablecoinPair[] {
-  if (!spotMeta || !Array.isArray(spotMeta.universe) || !Array.isArray(spotMeta.tokens)) return [];
-  const tokens = new Map(spotMeta.tokens.map((t) => [t.index, t] as const));
-  return STABLECOIN_PAIRS[network].filter((pair) => {
-    const live = spotMeta.universe.find((u) => u.index === pair.index);
-    if (!live || live.name !== pair.coin || live.tokens.length !== 2) return false;
-    if (live.tokens[0] !== pair.base.index || live.tokens[1] !== pair.quote.index) return false;
-    return tokenMatches(pair.base, tokens.get(pair.base.index)) && tokenMatches(pair.quote, tokens.get(pair.quote.index));
-  });
+  return STABLECOIN_PAIRS[network].filter((pair) => spotPairMatches(pair, spotMeta));
 }

@@ -165,7 +165,7 @@ export function summarizePolicy(policyInput: PolicyInput | Policy): string {
     `max ${p.maxOrdersPerMinute} orders/min`,
     `price band ${p.priceBandPct}%`,
     p.requiredBuilder ? `builder ${p.requiredBuilder.b} (${p.requiredBuilder.f / 10} bps)` : "no builder requirement",
-    ...(p.allowedSpotCoins?.length ? [`spot conversions: ${[...p.allowedSpotCoins].sort().join(", ")}`] : []),
+    ...(p.allowedSpotCoins?.length ? [`spot ${p.spotTrading ? "trading" : "conversions"}: ${[...p.allowedSpotCoins].sort().join(", ")}`] : []),
     ...(p.referralCode !== undefined ? [`referral code ${p.referralCode} only`] : []),
     "cannot withdraw or transfer",
   ].join("; ");
