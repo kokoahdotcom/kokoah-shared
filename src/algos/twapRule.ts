@@ -17,6 +17,8 @@ import { GUARDIAN_STATUSES, GuardianRuleValidationError, type GuardianStatus } f
 import type { MarketState, PositionState } from "../guardians/evaluate.js";
 import { type ActionIntent, type ActionIntentInput, AddressSchema, CloidSchema, CoinSchema, parseActionIntent, PositiveDecimalSchema } from "../intents/index.js";
 import { formatSize, normalizeDecimal } from "../precision/index.js";
+import type { ExchangeWindow } from "./exchangeWindow.js";
+import { StartTriggerSchema, startTriggerHit } from "./trigger.js";
 import { nextTwapSlice, TWAP_MAX_DURATION_MS, TWAP_MIN_DURATION_MS, TWAP_MIN_INTERVAL_MS } from "./twap.js";
 
 /** Largest per-slice slippage a server TWAP may use (the guardian policy bands orders at 5% of mark). */
@@ -51,6 +53,8 @@ export const TwapRuleSchema = v.pipe(
     randomize: v.optional(v.boolean(), true),
     /** Pause slices while the mark is beyond this price (a sell below it, a buy above it). */
     priceLimit: v.optional(PositiveDecimalSchema),
+    /** Start only once the mark crosses this price. */
+    startTrigger: v.optional(StartTriggerSchema),
     state: v.optional(
       v.object({
         seq: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0)), 0),
@@ -66,6 +70,8 @@ export const TwapRuleSchema = v.pipe(
         lastSliceCloid: v.optional(CloidSchema),
         /** True while the price limit holds slices back. */
         pausedByLimit: v.optional(v.boolean(), false),
+        /** True while Hyperliquid's maintenance or post-only window holds slices back. */
+        pausedByWindow: v.optional(v.boolean()),
       }),
     ),
   }),
@@ -97,8 +103,14 @@ function done(state: TwapRuleState, status: GuardianStatus, reason: string): Twa
   return { fire: false, intents: [], alerts: [], nextState: state, status, reason };
 }
 
+/** What the engine knows about the exchange beyond prices (optional). */
+export interface AlgoEnv {
+  /** Hyperliquid's maintenance or post-only window: IOC slices would not fill, so TWAPs pause. */
+  exchange?: ExchangeWindow;
+}
+
 /** Evaluates a `twap` rule (see the module notes). */
-export function evaluateTwapRule(rule: TwapRule, market: MarketState, ps: PositionState, now: number): TwapEvaluation {
+export function evaluateTwapRule(rule: TwapRule, market: MarketState, ps: PositionState, now: number, env: AlgoEnv = {}): TwapEvaluation {
   const status = rule.status ?? "armed";
   const st: TwapRuleState = { seq: 0, slicesSent: 0, pausedByLimit: false, ...rule.state };
   if (status === "paused" || status === "completed" || status === "failed" || status === "expired") return done(st, status, `Rule is ${status}`);
@@ -110,6 +122,11 @@ export function evaluateTwapRule(rule: TwapRule, market: MarketState, ps: Positi
   if (started && st.side !== undefined && st.side !== pos.side) return done(st, "completed", "The position changed side; the TWAP stopped");
   if (!m) return done(st, started ? "triggered" : "armed", "No market data");
   let next: TwapRuleState = st;
+  if (!started && rule.startTrigger && !startTriggerHit(rule.startTrigger, m.markPrice)) return done(st, "armed", `Waiting for the mark to reach ${rule.startTrigger.price}`);
+  if (env.exchange?.active) {
+    const why = env.exchange.reason === "maintenance" ? "maintenance" : "post-only window";
+    return done({ ...st, pausedByWindow: true }, started ? "triggered" : "armed", `Paused: Hyperliquid's ${why}; slices would not fill`);
+  }
   if (!started) {
     const startSize = formatSize(pos.size, m.szDecimals, "down");
     const reduceBy = rule.action.kind === "close" ? Number(startSize) : Number(formatSize((pos.size * rule.action.pct) / 100, m.szDecimals, "down"));
@@ -142,7 +159,7 @@ export function evaluateTwapRule(rule: TwapRule, market: MarketState, ps: Positi
   if (decision.kind === "paused") {
     return done({ ...next, pausedByLimit: true }, "triggered", `Paused: the mark ${m.markPrice} is beyond the price limit ${rule.priceLimit}`);
   }
-  if (decision.kind === "wait") return done({ ...next, pausedByLimit: false }, "triggered", "Waiting for the next slice");
+  if (decision.kind === "wait") return done({ ...next, pausedByLimit: false, pausedByWindow: false }, "triggered", "Waiting for the next slice");
   const closeSide = pos.side === "long" ? "sell" : "buy";
   // The slice never exceeds the position (a close TWAP's last slice is the whole position).
   const size = formatSize(Math.min(Number(decision.size), pos.size), m.szDecimals, "down");
@@ -173,6 +190,7 @@ export function evaluateTwapRule(rule: TwapRule, market: MarketState, ps: Positi
       lastSliceAt: now,
       lastSliceCloid: cloid,
       pausedByLimit: false,
+      pausedByWindow: false,
     },
     status: "triggered",
     reason: `TWAP slice ${decision.index + 1}: ${closeSide} ${size} ${rule.coin}`,
