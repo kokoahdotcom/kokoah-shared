@@ -82,6 +82,11 @@
       "import": "./dist/subaccounts/index.js",
       "default": "./dist/subaccounts/index.js"
     },
+    "./bots": {
+      "types": "./dist/bots/index.d.ts",
+      "import": "./dist/bots/index.js",
+      "default": "./dist/bots/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
