@@ -9,3 +9,4 @@ coverage/
 # Python venvs used to regenerate golden vectors live outside the repo; guard anyway.
 .venv/
 __pycache__/
+.build.lock
