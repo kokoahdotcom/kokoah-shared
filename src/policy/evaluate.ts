@@ -265,12 +265,13 @@ function checkOrderLegs(
       add("INVALID_SUBJECT", `${leg.coin}: size and prices must be positive numbers.`);
       continue;
     }
-    // Notional at the worst plausible price: limit, trigger or (for triggers that may fire now) mark.
+    // Notional at the worst plausible price: limit, trigger or mark (a sell's limit, e.g. a market sell's slippage
+    // price, can sit well below the value it trades).
     let px: number;
     if (leg.isTrigger) {
       px = Math.max(leg.price ?? 0, leg.triggerPrice ?? 0, mark ?? 0);
     } else if (leg.price !== undefined) {
-      px = leg.price;
+      px = Math.max(leg.price, mark ?? 0);
     } else if (mark !== undefined) {
       px = mark * (1 + (leg.slippageBps ?? 0) / 10_000);
     } else {

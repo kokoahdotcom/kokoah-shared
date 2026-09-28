@@ -189,6 +189,15 @@ describe("order limits", () => {
     expect(evalIntent(entry(), { expiresAfter: undefined, policy: { ...policy, maxExpiresAfterWindowMs: null } }).allowed).toBe(true);
   });
 
+  it("values a sell limited below the mark at the mark, not at its limit", () => {
+    // 0.5 BTC IOC sell 2.9% under a $100,000 mark: $48,550 at its limit, $50,000 at the mark (the cap is $50,000).
+    const sell = entry({ side: "sell", size: "0.5", price: "97100", tif: "Ioc", stopLoss: undefined, reduceOnly: false });
+    const withRoom = { policy: { ...policy, requireStopLossForNewEntries: false } };
+    expect(evalIntent(sell, withRoom).allowed).toBe(true);
+    expect(codes(evalIntent({ ...sell, size: "0.50001" } as ActionIntentInput, withRoom))).toContain("ORDER_NOTIONAL_EXCEEDED");
+    expect(codes(evalIntent(sell, { ...withRoom, dailyNotionalUsedUsd: 150_001 }))).toContain("DAILY_NOTIONAL_EXCEEDED");
+  });
+
   it("denies new entries while the daily loss lock is active, but allows reducing", () => {
     expect(codes(evalIntent(entry(), { lossLockActive: true }))).toEqual(["DAILY_LOSS_LOCKED"]);
     expect(evalIntent(entry({ reduceOnly: true, side: "sell", stopLoss: undefined }), { lossLockActive: true }).allowed).toBe(true);
