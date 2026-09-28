@@ -48,6 +48,7 @@ export type HlErrorCode =
   | "RATE_LIMITED"
   | "UNKNOWN_SIGNER"
   | "ACCOUNT_NOT_ACTIVATED"
+  | "BRIDGE_UNAVAILABLE"
   | "INVALID_NONCE"
   | "ACTION_EXPIRED"
   | "MULTI_SIG_REQUIRED"
@@ -126,6 +127,7 @@ export const HL_ERROR_CATALOG: Readonly<Record<HlErrorCode, HlErrorInfo>> = Obje
   ACCOUNT_NOT_ACTIVATED: I("ACCOUNT_NOT_ACTIVATED", "Account not activated", "This Hyperliquid account has no deposit yet. Deposit first, then try again.", false, "account"),
   INVALID_NONCE: I("INVALID_NONCE", "Signing conflict", "Temporary signing conflict (for example several open tabs); retry safely.", true, "signing"),
   ACTION_EXPIRED: I("ACTION_EXPIRED", "Expired", "The order took too long to reach the exchange and wasn't placed.", true, "request"),
+  BRIDGE_UNAVAILABLE: I("BRIDGE_UNAVAILABLE", "Withdrawal refused", "Hyperliquid's bridge refused the withdrawal right now. Nothing left the account; try again later.", true, "account"),
   MULTI_SIG_REQUIRED: I("MULTI_SIG_REQUIRED", "Multi-sig account", "This account is a multi-sig account; actions need its multi-sig signers.", false, "account"),
   MALFORMED_REQUEST: I("MALFORMED_REQUEST", "Request rejected", "The exchange could not read the request.", false, "request"),
   UNKNOWN: I("UNKNOWN", "Rejected", "The exchange rejected the request.", false, "unknown"),
@@ -169,6 +171,7 @@ const RULES: ReadonlyArray<Rule> = [
   { re: /invalid nonce|nonce too (low|high)|nonce.*(already used|duplicate)/i, code: "INVALID_NONCE" },
   { re: /already expired|action expired/i, code: "ACTION_EXPIRED" },
   { re: /multi-sig required/i, code: "MULTI_SIG_REQUIRED" },
+  { re: /error withdrawing from bridge/i, code: "BRIDGE_UNAVAILABLE" },
   { re: /failed to deserialize|invalid json|unknown variant/i, code: "MALFORMED_REQUEST" },
 ];
 
