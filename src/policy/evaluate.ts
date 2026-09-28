@@ -208,9 +208,16 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
       break;
     }
     case "updateIsolatedMargin":
-    case "topUpIsolatedOnlyMargin":
+    case "topUpIsolatedOnlyMargin": {
       checkCoin(wire ? resolveCoin(wire.asset as number, context, add) : intent?.kind === "updateIsolatedMargin" ? intent.coin : undefined);
+      // A key without manual trading (the servers' automation keys) may add margin to an isolated position, never take
+      // it out: removing it moves the user's own position toward liquidation, which no notional cap covers.
+      const amount = wire ? Number(wire.ntli) : intent?.kind === "updateIsolatedMargin" ? Number(intent.amountUsd) : Number.NaN;
+      if (actionType === "updateIsolatedMargin" && policy.allowedOrigins && !policy.allowedOrigins.includes("manual") && !(amount > 0)) {
+        add("ACTION_TYPE_NOT_ALLOWED", "Automation may add margin to an isolated position, not remove it.");
+      }
       break;
+    }
     case "cancel":
     case "cancelByCloid": {
       // Cancels are exempt from notional and rate limits, but a key restricted to some markets may only touch those.
