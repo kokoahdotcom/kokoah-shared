@@ -119,6 +119,7 @@ export type CompileErrorCode =
   | "INVALID_BUILDER"
   | "MARGIN_PRECISION"
   | "SCHEDULE_TOO_SOON"
+  | "SCHEDULE_TOO_FAR"
   | "UNSUPPORTED";
 
 /** Thrown when an intent cannot be compiled. */
@@ -135,6 +136,11 @@ export class CompileError extends Error {
 export const MARKET_TRIGGER_SLIPPAGE_BPS = 1000;
 /** `scheduleCancel.time` must be at least 5 s in the future. */
 export const SCHEDULE_CANCEL_MIN_LEAD_MS = 5000;
+/**
+ * …and at most 1 h: it cancels every open order, the user's own stop-losses included, so a far-off one signed by a
+ * compromised app would go off long after anyone noticed.
+ */
+export const SCHEDULE_CANCEL_MAX_LEAD_MS = 3_600_000;
 
 /**
  * Compiles an intent into the exact HL wire action.
@@ -209,6 +215,9 @@ export function compileAction(intentInput: ActionIntent | ActionIntentInput, opt
     case "scheduleCancel": {
       if (intent.time !== undefined && options.now !== undefined && intent.time < options.now + SCHEDULE_CANCEL_MIN_LEAD_MS) {
         throw new CompileError("SCHEDULE_TOO_SOON", "scheduleCancel time must be at least 5 seconds in the future");
+      }
+      if (intent.time !== undefined && options.now !== undefined && intent.time > options.now + SCHEDULE_CANCEL_MAX_LEAD_MS) {
+        throw new CompileError("SCHEDULE_TOO_FAR", "scheduleCancel time must be at most 1 hour in the future");
       }
       const raw = intent.time === undefined ? { type: "scheduleCancel" as const } : { type: "scheduleCancel" as const, time: intent.time };
       return { action: canonical(ScheduleCancelRequest.entries.action, raw), cloids: [], ...vault, intent };

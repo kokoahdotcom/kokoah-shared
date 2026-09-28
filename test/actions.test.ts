@@ -160,6 +160,8 @@ describe("compileAction", () => {
     expect(compileError(() => compileAction({ kind: "order", coin: "BTC", side: "buy", orderType: "limit", size: "0.1", price: "100000", origin: "manual" }, { registry, builder: { address: "0x12", feeTenthsBps: 1 } as never })).code).toBe("INVALID_BUILDER");
     expect(compileError(() => compileAction({ kind: "updateIsolatedMargin", coin: "SOL", amountUsd: "1.0000001", origin: "manual" }, { registry })).code).toBe("MARGIN_PRECISION");
     expect(compileError(() => compileAction({ kind: "scheduleCancel", time: 1_000_004_000, origin: "manual" }, { registry, now: 1_000_000_000 })).code).toBe("SCHEDULE_TOO_SOON");
+    expect(compileError(() => compileAction({ kind: "scheduleCancel", time: 1_000_000_000 + 3_600_001, origin: "manual" }, { registry, now: 1_000_000_000 })).code).toBe("SCHEDULE_TOO_FAR");
+    expect(compileAction({ kind: "scheduleCancel", time: 1_000_000_000 + 3_600_000, origin: "manual" }, { registry, now: 1_000_000_000 }).action).toEqual({ type: "scheduleCancel", time: 1_003_600_000 });
     expect(compileError(() => compileAction({ kind: "order", origin: "manual" } as never, { registry })).code).toBe("INVALID_INTENT");
   });
 
