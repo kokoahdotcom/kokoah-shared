@@ -40,6 +40,7 @@ describe("mapHlError (FRONTEND_SPEC §9.10 + HL error table)", () => {
   it("extracts details", () => {
     expect(mapHlError("User or API Wallet 0xABCDEF0123456789abcdef0123456789abcdef01 does not exist.").details?.address).toBe("0xabcdef0123456789abcdef0123456789abcdef01");
     expect(mapHlError("Too many cumulative requests sent").details?.waitSeconds).toBe(10);
+    expect(mapHlError("Error withdrawing from bridge")).toMatchObject({ code: "BRIDGE_UNAVAILABLE", retryable: true });
     expect(mapHlError("Order 2: Invalid TP/SL price.").details?.orderIndex).toBe(2);
     expect(mapHlError("Post only order would have immediately matched, bbo was 1@2").details?.bbo).toBe("1@2");
     expect(mapHlError("Invalid nonce").retryable).toBe(true);
