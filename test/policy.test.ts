@@ -198,6 +198,15 @@ describe("order limits", () => {
     expect(codes(evalIntent(sell, { ...withRoom, dailyNotionalUsedUsd: 150_001 }))).toContain("DAILY_NOTIONAL_EXCEEDED");
   });
 
+  it("lets automation keys add isolated margin but never remove it", () => {
+    const margin = (amountUsd: string, origin: string) => ({ kind: "updateIsolatedMargin", coin: "BTC", amountUsd, origin }) as ActionIntentInput;
+    const server = { policy: { ...policy, allowedOrigins: ["guardian"] as Policy["allowedOrigins"] } };
+    expect(evalIntent(margin("50", "guardian"), server).allowed).toBe(true);
+    expect(codes(evalIntent(margin("-50", "guardian"), server))).toContain("ACTION_TYPE_NOT_ALLOWED");
+    // The user's own key may take margin out.
+    expect(evalIntent(margin("-50", "manual")).allowed).toBe(true);
+  });
+
   it("denies new entries while the daily loss lock is active, but allows reducing", () => {
     expect(codes(evalIntent(entry(), { lossLockActive: true }))).toEqual(["DAILY_LOSS_LOCKED"]);
     expect(evalIntent(entry({ reduceOnly: true, side: "sell", stopLoss: undefined }), { lossLockActive: true }).allowed).toBe(true);
