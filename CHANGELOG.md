@@ -7,6 +7,13 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `ops` (new entry point): operator alerts shared by the backend and the signer service. `scrubOpsText` (credentials,
+  tokens, API keys, webhook URLs, PEM, keys and signatures, wallet, e-mail and IP addresses, control characters),
+  `stackFrames`, `opsFingerprint` / `normalizeForFingerprint` (one bug, one alert), `cleanOpsEvent`, `OpsAggregator`
+  (per-process grouping with an overflow cap), `OPS_COOLDOWN_MS` by severity, `opsWebhookKind` (Discord or
+  Slack-compatible; https only), `parseDiscordMention`, `discordPayloads` / `slackPayloads` (within Discord's limits;
+  untrusted text in code blocks, no mentions except the configured one on critical alerts), `postOpsWebhook` (429
+  waits, rejected webhooks, refused payloads) and `sendOpsBatch`.
 - `policy`: `spotTrading` (optional; with `allowedSpotCoins` the listed pairs may be traded with market orders and IOC,
   GTC and post-only limits within the price bands, still one order with no modify, trigger, reduce-only or grouping;
   omitted: Convert's IOC-only rule, so existing policies and hashes are unchanged). `VERIFIED_SPOT_PAIRS` (Hyperliquid's

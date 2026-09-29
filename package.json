@@ -87,6 +87,11 @@
       "import": "./dist/bots/index.js",
       "default": "./dist/bots/index.js"
     },
+    "./ops": {
+      "types": "./dist/ops/index.d.ts",
+      "import": "./dist/ops/index.js",
+      "default": "./dist/ops/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
