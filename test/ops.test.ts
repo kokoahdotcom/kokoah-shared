@@ -11,6 +11,7 @@ import {
   sendOpsBatch,
   slackPayloads,
   stackFrames,
+  wellFormed,
   type OpsAlert,
 } from "../src/ops/index.js";
 
@@ -43,6 +44,48 @@ describe("scrubOpsText", () => {
     expect(scrubOpsText("a\u0000b\u202ec\u200bd\ne\tf")).toBe("abcd\ne\tf");
     const ordinary = "TypeError: Cannot read properties of undefined (reading 'coin')\n    at run (dist/src/engine/worker.js:12:34)";
     expect(scrubOpsText(ordinary)).toBe(ordinary);
+  });
+});
+
+describe("hostile text", () => {
+  it("never leaves half an emoji behind (Postgres refuses jsonb with one)", () => {
+    const e = cleanOpsEvent({ severity: "warning", source: "browser", title: "q".repeat(199) + "😀", detail: "d".repeat(1499) + "😀x", context: { route: "/" + "z".repeat(117) + "😀" + "bbbb" } });
+    for (const v of [e.title, e.detail, String(e.context.route)]) expect((v as string & { isWellFormed(): boolean }).isWellFormed()).toBe(true);
+    expect(JSON.stringify(e)).not.toMatch(/\\ud83d(?!\\ude)/i);
+    expect(wellFormed("a\uD83Db")).toBe("a\uFFFDb");
+    expect(scrubOpsText("x\uDE00y")).toBe("x\uFFFDy");
+  });
+
+  it("removes secrets written the way environments and services write them", () => {
+    const cases: Array<[string, string]> = [
+      ["HMAC_SECRET=abc123 OPENROUTER_API_KEY=sk_live_x DATABASE_PASSWORD=hunter2", "HMAC_SECRET=[redacted] OPENROUTER_API_KEY=[redacted] DATABASE_PASSWORD=[redacted]"],
+      ["connect rediss://:s3cretpass@redis:6379 failed", "connect rediss://[credentials]@redis:6379 failed"],
+      [`GET /bot123456789:${"A".repeat(35)}/getUpdates`, "GET /bot[telegram-token]/getUpdates"],
+      ["session Q2FsbGVkIFdpdGggYSBrZXkgdGhhdF9pcy1sb25nZXI0Mw ok", "session [token] ok"],
+      ["AccessDenied on arn:aws:kms:eu-west-1:123456789012:key/abcd for arn:aws:iam::210987654321:role/x", "AccessDenied on arn:aws:kms:eu-west-1:[account]:key/abcd for arn:aws:iam::[account]:role/x"],
+      ["key AKIAIOSFODNN7EXAMPLE used", "key [aws-key] used"],
+    ];
+    for (const [input, out] of cases) expect(scrubOpsText(input), input).toBe(out);
+    // Identifiers and paths that only look long stay readable.
+    expect(scrubOpsText("at SubAccountDirectory.refreshDue (dist/src/accounts/subAccounts.js:185:9)")).toBe("at SubAccountDirectory.refreshDue (dist/src/accounts/subAccounts.js:185:9)");
+  });
+
+  it("stays fast on text crafted to make patterns backtrack", () => {
+    const inputs = [
+      "-eyJ".repeat(5_000),
+      " eyJ" + "a".repeat(20_000),
+      "a@".repeat(5_000),
+      "a".repeat(7_999) + "g",
+      "a_".repeat(4_000) + "=",
+      "x://".repeat(3_000),
+      "1".repeat(8_000) + ":",
+      ("ab.".repeat(30) + "@").repeat(100),
+    ];
+    for (const input of inputs) {
+      const t0 = performance.now();
+      scrubOpsText(input);
+      expect(performance.now() - t0, input.slice(0, 12)).toBeLessThan(50);
+    }
   });
 });
 
@@ -168,6 +211,12 @@ describe("webhooks", () => {
     expect(p!.embeds[0]!.title).toContain("(again)");
     expect(p!.embeds[0]!.fields![1]!.value).toBe("×37 more since the last message (412 in all, first <t:1700000000:R>)");
     expect(p!.allowed_mentions).toEqual({ parse: [] });
+  });
+
+  it("escapes Slack-compatible text so it can't ping or link", () => {
+    const [p] = slackPayloads({ alerts: [alert(1, { title: "<!channel> rotate now: <https://evil.example/x|https://kokoah.app/admin> @here [x](https://evil.example) a&b" })] }, { label: "x" });
+    expect(p!.text).toContain("&lt;!channel&gt; rotate now: &lt;https://evil.example/x|https://kokoah.app/admin&gt; ＠here ［x］(https://evil.example) a&amp;b");
+    expect(p!.text).not.toMatch(/<!|<https|@here|\[x\]/);
   });
 
   it("builds Slack-compatible text in parts of at most 3,500 characters", () => {

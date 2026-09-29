@@ -75,41 +75,75 @@ export interface OpsProblemNotice {
 const SECRET_KEYS =
   "password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key|apikey|x-api-key|authorization|auth|cookie|set-cookie|session|signature|private[_-]?key|privatekey|mnemonic|seed|hmac|kek|credential|credentials";
 
-/** Removes secrets and personal data from text that will leave the server (see the module notes). */
+/** Longest text scrubbed (callers keep far less): bounds the work on attacker-supplied text. */
+const MAX_SCRUB = 8_000;
+
+/**
+ * Well-formed UTF-16: a lone surrogate (half an emoji, e.g. from a cut) becomes U+FFFD. Postgres refuses jsonb with a
+ * lone surrogate, and one anonymous report must never be able to break the alert path's writes.
+ */
+export function wellFormed(s: string): string {
+  const f = (s as { toWellFormed?: () => string }).toWellFormed;
+  return typeof f === "function" ? f.call(s) : s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
+}
+
+/**
+ * Removes secrets and personal data from text that will leave the server (see the module notes). Every pattern is
+ * anchored at the start of a token (a lookbehind) and bounded, so the work stays linear in the (capped) length on
+ * any input: a crafted report can't stall the worker that also runs the guardians.
+ */
 export function scrubOpsText(input: string): string {
-  let s = input;
-  // Control characters (not tab and newline) could hide text or break formatting.
+  let s = wellFormed(input.length > MAX_SCRUB ? input.slice(0, MAX_SCRUB) : input);
+  // Control characters (not tab and newline) could hide text or break formatting; NUL also breaks Postgres text.
   s = s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f​-‏‪-‮⁦-⁩]/g, "");
-  s = s.replace(/-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(-----END [A-Z0-9 ]+-----|$)/g, "[pem]");
+  s = s.replace(/-----BEGIN [A-Z0-9 ]{1,40}-----[\s\S]*?(?:-----END [A-Z0-9 ]{1,40}-----|$)/g, "[pem]");
   // A webhook URL (Discord's or another) grants posting: never repeat one.
-  s = s.replace(/(discord(?:app)?\.com\/api\/webhooks\/)[^\s"'<>)]+/gi, "$1[redacted]");
+  s = s.replace(/(discord(?:app)?\.com\/api\/(?:v\d+\/)?webhooks\/)[^\s"'<>)]+/gi, "$1[redacted]");
   s = s.replace(/(hooks\.slack\.com\/services\/)[^\s"'<>)]+/gi, "$1[redacted]");
-  // Credentials in URLs: scheme://user:password@host.
-  s = s.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:'"]+(?::[^\s/@'"]*)?@/gi, "$1[credentials]@");
+  // Credentials in URLs: scheme://user:password@host, also with an empty user (rediss://:password@host).
+  s = s.replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/@:'"]*(?::[^\s/@'"]*)?@/gi, "$1[credentials]@");
   // Query strings and fragments of URLs (tokens travel there); a stack frame's line and column stay.
   s = s.replace(/(\bhttps?:\/\/[^\s?#)"'<>]*)[?#][^\s)"'<>]*?(?=(?::\d+:\d+)?(?:[)\s"'<>]|$))/gi, "$1");
   // …and of paths (`/v1/x?token=…`).
   s = s.replace(/(^|[\s("'])(\/[\w./~%-]*)[?#][^\s)"']*/g, "$1$2");
   s = s.replace(/\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]");
-  s = s.replace(new RegExp(`\\b(${SECRET_KEYS})(\\s*[=:]\\s*|"\\s*:\\s*"?|'\\s*:\\s*'?)([^\\s,;&"'}\\]]+)`, "gi"), "$1$2[redacted]");
-  s = s.replace(/\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g, "sk-[redacted]");
-  s = s.replace(/\bAIza[0-9A-Za-z_-]{30,}/g, "AIza[redacted]");
-  s = s.replace(/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, "xox-[redacted]");
-  s = s.replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "gh_[redacted]");
-  s = s.replace(/\b\d{6,12}:[A-Za-z0-9_-]{30,}\b/g, "[telegram-token]");
-  s = s.replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[jwt]");
-  // Keys, signatures, hashes, then addresses (40 hex) and anything else long in hex or base64.
+  // `password=…`, `"secret":"…"`, and environment names ending in one (`HMAC_SECRET=`, `OPENROUTER_API_KEY=`).
+  s = s.replace(
+    new RegExp(`(?<![A-Za-z0-9])((?:[A-Za-z0-9]{1,40}_){0,4}(?:${SECRET_KEYS}))(\\s*[=:]\\s*|"\\s*:\\s*"?|'\\s*:\\s*'?)([^\\s,;&"'}\\]]+)`, "gi"),
+    "$1$2[redacted]",
+  );
+  s = s.replace(/(?<![A-Za-z0-9_-])sk-(?:ant-)?[A-Za-z0-9_-]{16,256}/g, "sk-[redacted]");
+  s = s.replace(/(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{30,128}/g, "AIza[redacted]");
+  s = s.replace(/(?<![A-Za-z0-9_-])xox[abprs]-[A-Za-z0-9-]{10,256}/g, "xox-[redacted]");
+  s = s.replace(/(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{20,256}/g, "gh_[redacted]");
+  s = s.replace(/(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])/g, "[aws-key]");
+  // AWS account ids in ARNs (they name the account an attacker would aim at).
+  s = s.replace(/(arn:aws[a-z-]{0,20}:[a-z0-9-]{1,40}:[a-z0-9-]{0,40}:)\d{12}(?=:)/g, "$1[account]");
+  // Telegram bot tokens, also inside a path (`/bot<token>/`).
+  s = s.replace(/(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,64}(?![A-Za-z0-9_-])/g, "[telegram-token]");
+  s = s.replace(/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,1024}\.[A-Za-z0-9_-]{8,4096}\.[A-Za-z0-9_-]{8,1024}/g, "[jwt]");
+  // Keys, signatures, hashes, then addresses (40 hex) and anything else long in hex or base64(url).
   s = s.replace(/0x[0-9a-fA-F]{41,}/g, "0x[hex]");
-  s = s.replace(/\b[0-9a-fA-F]{64,}\b/g, "[hex]");
+  s = s.replace(/(?<![0-9A-Za-z])(?=([0-9a-fA-F]{64,}))\1(?![0-9A-Za-z])/g, "[hex]");
   s = s.replace(/0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g, "0x[address]");
-  s = s.replace(/[A-Za-z0-9+/]{48,}={0,2}/g, (m) => (/\d/.test(m) && /[A-Z]/.test(m) && /[a-z]/.test(m) ? "[base64]" : m));
-  s = s.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}/g, "[email]");
+  const mixed = (m: string) => /\d/.test(m) && /[A-Z]/.test(m) && /[a-z]/.test(m);
+  s = s.replace(/[A-Za-z0-9+/]{48,}={0,2}/g, (m) => (mixed(m) ? "[base64]" : m));
+  // Session tokens, random ids and keys in base64url (43 characters for 32 bytes).
+  s = s.replace(/(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/g, (m) => (mixed(m) ? "[token]" : m));
+  s = s.replace(/(?<![\w.+-])[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![\w-])/g, "[email]");
   s = s.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ip]");
   s = s.replace(/\b(?:[0-9a-fA-F]{1,4}:){4,7}[0-9a-fA-F]{1,4}\b/g, "[ip]");
   return s;
 }
 
-const cut = (s: string, max: number) => (s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1))}…`);
+/** Cuts to `max` characters (with "…"), never between the two halves of an emoji. */
+const cut = (s: string, max: number) => {
+  if (s.length <= max) return s;
+  let end = Math.max(0, max - 1);
+  const c = s.charCodeAt(end - 1);
+  if (c >= 0xd800 && c <= 0xdbff) end--;
+  return `${s.slice(0, end)}…`;
+};
 
 /**
  * Up to `max` frames of an error's stack ("at fn (file:line:col)"), paths shortened to the app's own files and
@@ -418,18 +452,27 @@ export function discordPayloads(
 }
 
 /** Slack-compatible `{"text"}` messages (Slack, Mattermost, Google Chat, ntfy, Discord's /slack): one per 3,500 characters. */
+/**
+ * Text for a Slack-compatible message: `&`, `<` and `>` escaped (no `<!channel>`, `<url|text>` or `<@user>`), `@` and
+ * square brackets neutralised (no `@here` or `[text](url)` where the receiver renders them).
+ */
+const slackText = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/@/g, "＠").replace(/\[/g, "［").replace(/\]/g, "］");
+
 export function slackPayloads(batch: { alerts?: OpsAlert[]; problems?: OpsProblemNotice[]; note?: string }, o: { label: string }): Array<{ text: string }> {
   const lines: string[] = [];
   batch = { ...batch, alerts: (batch.alerts ?? []).map(scrubAlert), problems: (batch.problems ?? []).map(scrubNotice), ...(batch.note ? { note: scrubOpsText(batch.note) } : {}) };
-  for (const p of batch.problems ?? []) lines.push(`${p.kind === "resolved" ? "✓ resolved" : "⚠ problem"} · ${p.subject}: ${cut(p.detail, 300)}`);
+  for (const p of batch.problems ?? []) lines.push(`${p.kind === "resolved" ? "✓ resolved" : "⚠ problem"} · ${slackText(p.subject)}: ${slackText(cut(p.detail, 300))}`);
   for (const a of batch.alerts ?? []) {
     const seen = a.repeat ? `×${a.newCount} more (${a.totalCount} in all)` : a.newCount > 1 ? `×${a.newCount}` : "first time";
     const ctx = Object.entries(a.context)
       .map(([k, v]) => `${k}=${String(v)}`)
       .join(" ");
-    lines.push(`${EMOJI[a.severity]} ${a.severity.toUpperCase()} · ${a.source}: ${a.title} (${seen})${a.detail ? `\n    ${cut(a.detail.split("\n")[0] ?? "", 300)}` : ""}${ctx ? `\n    ${cut(ctx, 300)}` : ""}`);
+    lines.push(
+      `${EMOJI[a.severity]} ${a.severity.toUpperCase()} · ${slackText(a.source)}: ${slackText(a.title)} (${seen})${a.detail ? `\n    ${slackText(cut(a.detail.split("\n")[0] ?? "", 300))}` : ""}${ctx ? `\n    ${slackText(cut(ctx, 300))}` : ""}`,
+    );
   }
-  if (batch.note) lines.push(batch.note);
+  if (batch.note) lines.push(slackText(batch.note));
   const out: Array<{ text: string }> = [];
   let text = `Kokoah ${o.label}:`;
   for (const l of lines) {
