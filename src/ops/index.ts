@@ -56,6 +56,8 @@ export interface OpsAlert {
   lastSeen: number;
   /** It was posted before: this is a follow-up with the count since. */
   repeat: boolean;
+  /** Shown in the footer, to look the event up or mute it (RUNBOOKS R9). */
+  fingerprint?: string;
 }
 
 /** A health problem (checked, not logged): posted when it starts and when it clears. */
@@ -362,7 +364,7 @@ function alertEmbed(raw: OpsAlert, label: string): DiscordEmbed {
     ...(a.detail ? { description: codeBlock(a.detail, 1600) } : {}),
     color: COLOR[a.severity],
     fields,
-    footer: { text: cut(label, 200) },
+    footer: { text: cut(a.fingerprint ? `${label} · id ${a.fingerprint}` : label, 200) },
     timestamp: new Date(a.lastSeen).toISOString(),
   };
 }
