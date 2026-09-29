@@ -7,6 +7,8 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `errors`: `AGENT_LIMIT` for Hyperliquid's refusal of a named agent past the account's allowance ("Too many extra
+  agents for cumulative volume traded. Current limit is 3"), with `details.agentLimit`.
 - `ops` (new entry point): operator alerts shared by the backend and the signer service. `scrubOpsText` (credentials,
   tokens, API keys, webhook URLs, PEM, keys and signatures, wallet, e-mail and IP addresses, control characters),
   `stackFrames`, `opsFingerprint` / `normalizeForFingerprint` (one bug, one alert), `cleanOpsEvent`, `OpsAggregator`
