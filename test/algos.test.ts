@@ -74,6 +74,10 @@ describe("algo cloids", () => {
     expect(() => algoCloid({ kind: "twap", parent: "x", slice: -1 })).toThrow(RangeError);
     expect(() => algoCloid({ kind: "twap", parent: "x", slice: 1, attempt: 256 })).toThrow(RangeError);
     expect(() => algoCloid({ kind: "nope" as "twap", parent: "x", slice: 1 })).toThrow(RangeError);
+    for (const key of ["constructor", "toString", "__proto__"]) {
+      expect(() => algoCloid({ kind: key as "twap", parent: "x", slice: 1 })).toThrow("Unknown algo kind");
+      expect(() => algoCloid({ kind: "twap", parent: "x", slice: 1 }, key as "manual")).toThrow("Unknown cloid origin tag");
+    }
   });
 });
 

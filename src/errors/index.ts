@@ -252,7 +252,7 @@ const STATUS_TABLE: Readonly<Record<string, { kind: OrderStatusKind; code?: HlEr
 
 /** Maps an HL order status string (e.g. "siblingFilledCanceled") to its bucket, code and message. */
 export function mapOrderStatus(status: string): OrderStatusInfo {
-  const row = STATUS_TABLE[status];
+  const row = Object.hasOwn(STATUS_TABLE, status) ? STATUS_TABLE[status] : undefined;
   if (!row) {
     const kind: OrderStatusKind = /Rejected$/.test(status) ? "rejected" : /Cancel(ed)?$/i.test(status) ? "canceled" : "unknown";
     return { status, kind, terminal: kind !== "unknown", ...(kind !== "unknown" ? { code: "UNKNOWN" as const } : {}), message: `Order status: ${status}` };

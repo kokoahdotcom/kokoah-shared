@@ -45,6 +45,12 @@ describe("cloids", () => {
     expect(parseCloid(deriveCloid("x", "guardian"))?.origin).toBe("guardian");
     expect(isCloid(deriveCloid("x"))).toBe(true);
   });
+  it("refuses Object.prototype keys as origin tags", () => {
+    for (const tag of ["constructor", "toString", "__proto__"]) {
+      expect(() => generateCloid(tag as "manual")).toThrow("Unknown cloid origin tag");
+      expect(() => deriveCloid("x", tag as "manual")).toThrow("Unknown cloid origin tag");
+    }
+  });
   it("parses foreign cloids", () => {
     expect(parseCloid("0x" + "ab".repeat(16))).toEqual({ kokoah: false, tag: "abababab" });
     expect(parseCloid("0x12")).toBeNull();
