@@ -10,3 +10,12 @@ coverage/
 .venv/
 __pycache__/
 .build.lock
+
+# Secrets never belong in git (examples and the frame's public build defaults are tracked on purpose).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+id_rsa*
