@@ -24,6 +24,14 @@ export const PolicySchema = v.strictObject({
   maxOrderNotionalUsd: v.pipe(v.number(), v.minValue(0)),
   /** Max total notional of orders per UTC day (USD). */
   maxDailyNotionalUsd: v.pipe(v.number(), v.minValue(0)),
+  /**
+   * Max realized loss per UTC day (USD): closed trades minus fees since 00:00 UTC, over the account and the
+   * sub-accounts in `allowedVaultAddresses` together (`dailyLoss.ts`). Once reached, new entries are
+   * denied until 00:00 UTC; closing and reducing stay allowed. The signer service measures it on Hyperliquid itself,
+   * so it holds even if the backend doesn't. Omitted: no limit. Signed through `policyHash` (optional and without a
+   * default, so policies signed before it keep their hash).
+   */
+  maxDailyLossUsd: v.optional(v.pipe(v.number(), v.gtValue(0))),
   /** Max leverage for `updateLeverage` and for entries in markets whose current leverage is known. */
   maxLeverage: v.pipe(v.number(), v.integer(), v.minValue(1)),
   /** New entries must carry an attached stop-loss (or the position must already have one). */

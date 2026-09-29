@@ -16,3 +16,4 @@ export * from "./spotPairs.js";
 export * from "./perpDexs.js";
 export * from "./bots.js";
 export * from "./origins.js";
+export * from "./dailyLoss.js";

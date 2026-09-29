@@ -88,6 +88,11 @@ export interface PolicyContext {
   leverageByCoin?: Readonly<Record<string, number>>;
   /** Daily loss lock (guardian) active: new entries are denied, reduce-only is allowed. */
   lossLockActive?: boolean;
+  /**
+   * Today's realized loss (USD, positive = loss; {@link dailyRealizedLossUsd}) for `policy.maxDailyLossUsd`. Checked
+   * only when given: the signer service always measures it when the policy sets the limit; previews may leave it out.
+   */
+  dailyLossUsd?: number;
 }
 
 interface OrderLeg {
@@ -346,6 +351,12 @@ function checkOrderLegs(
   const entries = legs.filter((l) => !l.reduceOnly && l.coin !== undefined && !l.spot);
   if (entries.length > 0) {
     if (context.lossLockActive) add("DAILY_LOSS_LOCKED", "The daily loss lock is active: only closing and reducing orders are allowed.");
+    if (policy.maxDailyLossUsd !== undefined && context.dailyLossUsd !== undefined && !(context.dailyLossUsd < policy.maxDailyLossUsd)) {
+      add(
+        "DAILY_LOSS_LIMIT",
+        `Today's realized loss of $${fmt(context.dailyLossUsd)} reached the $${fmt(policy.maxDailyLossUsd)} daily loss limit: only closing and reducing orders are allowed until 00:00 UTC.`,
+      );
+    }
     // Bots manage their own exits: the user's signed `botEntriesWithoutStopLoss` exempts origin `bot` only.
     const botExempt = origin === "bot" && policy.botEntriesWithoutStopLoss === true;
     if (policy.requireStopLossForNewEntries && !botExempt) {
