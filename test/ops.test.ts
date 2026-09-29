@@ -171,7 +171,7 @@ describe("webhooks", () => {
   });
 
   it("builds Slack-compatible text in parts of at most 3,500 characters", () => {
-    const out = slackPayloads({ alerts: Array.from({ length: 30 }, (_, i) => alert(i, { detail: "d".repeat(400) })) }, { label: "x" });
+    const out = slackPayloads({ alerts: Array.from({ length: 30 }, (_, i) => alert(i, { detail: "z".repeat(400) })) }, { label: "x" });
     expect(out.length).toBeGreaterThan(1);
     for (const p of out) expect(p.text.length).toBeLessThanOrEqual(3500);
     expect(out[0]!.text.startsWith("Kokoah x:\n🟠 ERROR · worker: job iteration failed 0 (first time)")).toBe(true);
