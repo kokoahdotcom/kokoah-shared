@@ -331,7 +331,16 @@ function embedSize(e: DiscordEmbed): number {
   return e.title.length + (e.description?.length ?? 0) + (e.footer?.text.length ?? 0) + (e.fields ?? []).reduce((n, f) => n + f.name.length + f.value.length, 0);
 }
 
-function alertEmbed(a: OpsAlert, label: string): DiscordEmbed {
+/** Every text of an alert cleaned again at the last step: nothing leaves unscrubbed, whatever path built it. */
+function scrubAlert(a: OpsAlert): OpsAlert {
+  const context: OpsContext = {};
+  for (const [k, v] of Object.entries(a.context)) context[k] = typeof v === "string" ? scrubOpsText(v) : v;
+  return { ...a, source: scrubOpsText(a.source), title: scrubOpsText(a.title), detail: scrubOpsText(a.detail), context };
+}
+const scrubNotice = (p: OpsProblemNotice): OpsProblemNotice => ({ ...p, subject: scrubOpsText(p.subject), detail: scrubOpsText(p.detail) });
+
+function alertEmbed(raw: OpsAlert, label: string): DiscordEmbed {
+  const a = scrubAlert(raw);
   const fields: DiscordEmbed["fields"] = [
     { name: "Where", value: plain(a.source, 100), inline: true },
     {
@@ -358,7 +367,8 @@ function alertEmbed(a: OpsAlert, label: string): DiscordEmbed {
   };
 }
 
-function problemEmbed(p: OpsProblemNotice, label: string): DiscordEmbed {
+function problemEmbed(raw: OpsProblemNotice, label: string): DiscordEmbed {
+  const p = scrubNotice(raw);
   const resolved = p.kind === "resolved";
   return {
     title: cut(`${resolved ? "✅ Resolved" : "⚠️ Problem"} · ${plain(p.subject, 200)}`, 256),
@@ -378,7 +388,7 @@ export function discordPayloads(
   o: { label: string; mention?: { user: string } | { role: string } | null },
 ): DiscordPayload[] {
   const embeds = [...(batch.problems ?? []).map((p) => problemEmbed(p, o.label)), ...(batch.alerts ?? []).map((a) => alertEmbed(a, o.label))];
-  if (batch.note) embeds.push({ title: "More", description: codeBlock(batch.note, 1500), color: COLOR.info, footer: { text: cut(o.label, 200) } });
+  if (batch.note) embeds.push({ title: "More", description: codeBlock(scrubOpsText(batch.note), 1500), color: COLOR.info, footer: { text: cut(o.label, 200) } });
   const critical = (batch.alerts ?? []).some((a) => a.severity === "critical");
   const out: DiscordPayload[] = [];
   let cur: DiscordEmbed[] = [];
@@ -408,6 +418,7 @@ export function discordPayloads(
 /** Slack-compatible `{"text"}` messages (Slack, Mattermost, Google Chat, ntfy, Discord's /slack): one per 3,500 characters. */
 export function slackPayloads(batch: { alerts?: OpsAlert[]; problems?: OpsProblemNotice[]; note?: string }, o: { label: string }): Array<{ text: string }> {
   const lines: string[] = [];
+  batch = { ...batch, alerts: (batch.alerts ?? []).map(scrubAlert), problems: (batch.problems ?? []).map(scrubNotice), ...(batch.note ? { note: scrubOpsText(batch.note) } : {}) };
   for (const p of batch.problems ?? []) lines.push(`${p.kind === "resolved" ? "✓ resolved" : "⚠ problem"} · ${p.subject}: ${cut(p.detail, 300)}`);
   for (const a of batch.alerts ?? []) {
     const seen = a.repeat ? `×${a.newCount} more (${a.totalCount} in all)` : a.newCount > 1 ? `×${a.newCount}` : "first time";
