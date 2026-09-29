@@ -212,6 +212,18 @@ describe("order limits", () => {
     expect(evalIntent(entry({ reduceOnly: true, side: "sell", stopLoss: undefined }), { lossLockActive: true }).allowed).toBe(true);
   });
 
+  it("denies new entries once today's realized loss reaches the signed daily loss limit, but allows reducing", () => {
+    const limited = { policy: { ...policy, maxDailyLossUsd: 500 } };
+    expect(evalIntent(entry(), { ...limited, dailyLossUsd: 499.99 }).allowed).toBe(true);
+    const at = evalIntent(entry(), { ...limited, dailyLossUsd: 500 });
+    expect(codes(at)).toEqual(["DAILY_LOSS_LIMIT"]);
+    expect(at.violations[0]!.message).toContain("$500");
+    expect(evalIntent(entry({ reduceOnly: true, side: "sell", stopLoss: undefined }), { ...limited, dailyLossUsd: 9_000 }).allowed).toBe(true);
+    // Not measured (a preview): not checked; no limit signed: never checked.
+    expect(evalIntent(entry(), limited).allowed).toBe(true);
+    expect(evalIntent(entry(), { dailyLossUsd: 9_000 }).allowed).toBe(true);
+  });
+
   it("fails after the signed policy expires", () => {
     expect(codes(evalIntent(entry(), { policyExpiresAt: NOW }))).toEqual(["POLICY_EXPIRED"]);
   });
@@ -280,6 +292,11 @@ describe("signed policies (EIP-712)", () => {
     expect(hashPolicy(shuffled)).toBe(hashPolicy(policy));
     expect(canonicalPolicyJson(shuffled)).toBe(canonicalPolicyJson(policy));
     expect(hashPolicy({ ...policy, maxLeverage: 11 })).not.toBe(hashPolicy(policy));
+    // The daily loss limit is bound by the hash; left out, it leaves older policies' hashes as they were.
+    expect(hashPolicy({ ...policy, maxDailyLossUsd: 500 })).not.toBe(hashPolicy(policy));
+    expect(canonicalPolicyJson(policy)).not.toContain("maxDailyLossUsd");
+    expect(() => parsePolicy({ ...policy, maxDailyLossUsd: 0 })).toThrow(PolicyValidationError);
+    expect(summarizePolicy({ ...policy, maxDailyLossUsd: 500 })).toContain("max daily loss $500");
     expect(hashPolicy({ ...policy, allowedVaultAddresses: [] })).not.toBe(hashPolicy(policy));
   });
 

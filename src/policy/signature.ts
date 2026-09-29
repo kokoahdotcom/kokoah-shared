@@ -159,6 +159,7 @@ export function summarizePolicy(policyInput: PolicyInput | Policy): string {
     `markets: ${p.allowedCoins === "*" ? "all" : p.allowedCoins.join(", ")}`,
     `max order $${usd(p.maxOrderNotionalUsd)}`,
     `max daily $${usd(p.maxDailyNotionalUsd)}`,
+    ...(p.maxDailyLossUsd !== undefined ? [`max daily loss $${usd(p.maxDailyLossUsd)}`] : []),
     `max leverage ${p.maxLeverage}x`,
     p.requireStopLossForNewEntries ? `stop-loss required on entries${p.botEntriesWithoutStopLoss ? " (bots exempt)" : ""}` : "stop-loss optional",
     ...(p.allowedOrigins ? [`origins: ${[...new Set(p.allowedOrigins)].sort().join(", ")}`] : []),
