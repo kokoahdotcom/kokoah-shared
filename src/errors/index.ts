@@ -46,6 +46,7 @@ export type HlErrorCode =
   | "INTERNAL_CANCEL"
   | "USER_CANCELED"
   | "RATE_LIMITED"
+  | "AGENT_LIMIT"
   | "UNKNOWN_SIGNER"
   | "ACCOUNT_NOT_ACTIVATED"
   | "BRIDGE_UNAVAILABLE"
@@ -77,6 +78,8 @@ export interface MappedHlError extends HlErrorInfo {
     address?: string;
     /** Suggested wait before the next action (rate limit). */
     waitSeconds?: number;
+    /** Named trading keys Hyperliquid allows this account now ("Current limit is 3"). */
+    agentLimit?: number;
     /** Best bid/offer quoted in a BadAloPx error. */
     bbo?: string;
     /** Index of the order in a batch ("Order 2: …"). */
@@ -123,6 +126,7 @@ export const HL_ERROR_CATALOG: Readonly<Record<HlErrorCode, HlErrorInfo>> = Obje
   INTERNAL_CANCEL: I("INTERNAL_CANCEL", "Cancelled", "Cancelled by the exchange.", false, "order"),
   USER_CANCELED: I("USER_CANCELED", "Cancelled", "Cancelled.", false, "order"),
   RATE_LIMITED: I("RATE_LIMITED", "Too many requests", "Too many requests for this account's trading volume. Wait about 10 seconds before the next action.", true, "rate_limit"),
+  AGENT_LIMIT: I("AGENT_LIMIT", "Trading keys full", "All of this account's named trading keys on Hyperliquid are in use (the number allowed grows with trading volume). Remove one you no longer use, then try again.", false, "account"),
   UNKNOWN_SIGNER: I("UNKNOWN_SIGNER", "Trading key not recognised", "Trading key is missing or expired; re-enable trading.", false, "signing"),
   ACCOUNT_NOT_ACTIVATED: I("ACCOUNT_NOT_ACTIVATED", "Account not activated", "This Hyperliquid account has no deposit yet. Deposit first, then try again.", false, "account"),
   INVALID_NONCE: I("INVALID_NONCE", "Signing conflict", "Temporary signing conflict (for example several open tabs); retry safely.", true, "signing"),
@@ -165,6 +169,9 @@ const RULES: ReadonlyArray<Rule> = [
   { re: /too many open orders/i, code: "TOO_MANY_OPEN_ORDERS" },
   { re: /order has (invalid|zero) size/i, code: "INVALID_SIZE" },
   { re: /never placed, already canceled, or filled|\bMissingOrder\b|order not found/i, code: "ORDER_NOT_FOUND", hlType: "MissingOrder" },
+  // approveAgent past the named-agent allowance ("Too many extra agents for cumulative volume traded. Current limit
+  // is 3"); before RATE_LIMITED, whose words it shares.
+  { re: /too many extra agents/i, code: "AGENT_LIMIT" },
   { re: /too many cumulative requests|rate limit/i, code: "RATE_LIMITED" },
   { re: /user or api wallet .* does not exist/i, code: "UNKNOWN_SIGNER" },
   { re: /must deposit before performing actions/i, code: "ACCOUNT_NOT_ACTIVATED" },
@@ -186,6 +193,8 @@ export function mapHlError(raw: string): MappedHlError {
   const addr = /user or api wallet (0x[0-9a-fA-F]{40})/i.exec(text) ?? /User: (0x[0-9a-fA-F]{40})/.exec(text);
   if (addr?.[1] && (code === "UNKNOWN_SIGNER" || code === "ACCOUNT_NOT_ACTIVATED")) details.address = addr[1].toLowerCase();
   if (code === "RATE_LIMITED") details.waitSeconds = 10;
+  const limit = /current limit is (\d+)/i.exec(text);
+  if (limit?.[1] && code === "AGENT_LIMIT") details.agentLimit = Number(limit[1]);
   const bbo = /bbo was (.+?)\.?$/i.exec(text);
   if (bbo?.[1] && code === "POST_ONLY_WOULD_MATCH") details.bbo = bbo[1];
   const info = HL_ERROR_CATALOG[code];

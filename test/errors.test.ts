@@ -22,6 +22,7 @@ describe("mapHlError (FRONTEND_SPEC §9.10 + HL error table)", () => {
     ["Order would cause position to exceed margin tier limit at current leverage", "MAX_POSITION", "PerpMaxPosition"],
     ["Order was never placed, already canceled, or filled.", "ORDER_NOT_FOUND", "MissingOrder"],
     ["Too many cumulative requests sent (37986 > 10436) for cumulative volume traded $437.92. Place taker orders to free up 1 request per USDC traded.", "RATE_LIMITED", undefined],
+    ["Too many extra agents for cumulative volume traded. Current limit is 3", "AGENT_LIMIT", undefined],
     ["L1 error: User or API Wallet 0x0123456789abcdef0123456789abcdef01234567 does not exist.", "UNKNOWN_SIGNER", undefined],
     ["Must deposit before performing actions. User: 0x0123456789abcdef0123456789abcdef01234567", "ACCOUNT_NOT_ACTIVATED", undefined],
     ["Invalid nonce: duplicate nonce", "INVALID_NONCE", undefined],
@@ -40,6 +41,11 @@ describe("mapHlError (FRONTEND_SPEC §9.10 + HL error table)", () => {
   it("extracts details", () => {
     expect(mapHlError("User or API Wallet 0xABCDEF0123456789abcdef0123456789abcdef01 does not exist.").details?.address).toBe("0xabcdef0123456789abcdef0123456789abcdef01");
     expect(mapHlError("Too many cumulative requests sent").details?.waitSeconds).toBe(10);
+    expect(mapHlError("Too many extra agents for cumulative volume traded. Current limit is 3")).toMatchObject({
+      code: "AGENT_LIMIT",
+      retryable: false,
+      details: { agentLimit: 3 },
+    });
     expect(mapHlError("Error withdrawing from bridge")).toMatchObject({ code: "BRIDGE_UNAVAILABLE", retryable: true });
     expect(mapHlError("Order 2: Invalid TP/SL price.").details?.orderIndex).toBe(2);
     expect(mapHlError("Post only order would have immediately matched, bbo was 1@2").details?.bbo).toBe("1@2");
