@@ -63,6 +63,11 @@ describe("guardian rule schemas", () => {
     expect(() => parseGuardianRule(input)).toThrow(GuardianRuleValidationError);
     expect(() => parseGuardianRule(input)).toThrow(message);
   });
+  it.each(["constructor", "toString", "hasOwnProperty", "__proto__"])("treats the Object.prototype key %s as an unknown type", (type) => {
+    const input = { type, id: "x", createdAt: NOW };
+    expect(() => parseGuardianRule(input)).toThrow(GuardianRuleValidationError);
+    expect(() => parseGuardianRule(input)).toThrow("Unknown guardian rule type");
+  });
 });
 
 describe("breakeven", () => {

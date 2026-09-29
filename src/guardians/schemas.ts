@@ -462,7 +462,8 @@ export class GuardianRuleValidationError extends Error {
 /** Validates a rule using the schema for its `type` (clear errors instead of a union mismatch). */
 export function parseGuardianRule(input: unknown): GuardianRule {
   const type = (input as { type?: unknown } | null)?.type;
-  const schema = typeof type === "string" ? SCHEMA_BY_TYPE[type as GuardianRuleType] : undefined;
+  // Own keys only: "constructor", "toString" or "__proto__" must be unknown types, not Object.prototype members.
+  const schema = typeof type === "string" && Object.hasOwn(SCHEMA_BY_TYPE, type) ? SCHEMA_BY_TYPE[type as GuardianRuleType] : undefined;
   if (!schema) throw new GuardianRuleValidationError(`Unknown guardian rule type: ${String(type)}`);
   const r = v.safeParse(schema, input);
   if (!r.success) throw new GuardianRuleValidationError(`Invalid ${String(type)} rule: ${v.summarize(r.issues)}`);

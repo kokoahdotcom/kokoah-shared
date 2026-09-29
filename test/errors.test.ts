@@ -78,6 +78,9 @@ describe("mapOrderStatus", () => {
     ["tooManyOpenOrdersRejected", "rejected", true, "TOO_MANY_OPEN_ORDERS"],
     ["brandNewRejected", "rejected", true, "UNKNOWN"],
     ["mystery", "unknown", false, undefined],
+    ["constructor", "unknown", false, undefined],
+    ["toString", "unknown", false, undefined],
+    ["__proto__", "unknown", false, undefined],
   ] as const)("%s", (status, kind, terminal, code) => {
     const m = mapOrderStatus(status);
     expect(m.kind).toBe(kind);

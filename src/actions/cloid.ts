@@ -48,7 +48,7 @@ function tagHex(originTag: IntentOrigin | `0x${string}` | undefined): string {
     if (!/^[0-9a-f]{8}$/.test(hex)) throw new RangeError("A custom cloid tag must be 0x followed by 8 hex characters (4 bytes)");
     return hex;
   }
-  const code = CLOID_ORIGIN_CODES[originTag as IntentOrigin];
+  const code = Object.hasOwn(CLOID_ORIGIN_CODES, originTag) ? CLOID_ORIGIN_CODES[originTag as IntentOrigin] : undefined;
   if (code === undefined) throw new RangeError(`Unknown cloid origin tag: ${originTag}`);
   return `${KOKOAH_CLOID_MARKER}${code}${KOKOAH_CLOID_VERSION}`;
 }
@@ -159,9 +159,9 @@ export function algoCloid(tag: AlgoCloidTag, origin: IntentOrigin = "manual"): C
   const attempt = tag.attempt ?? 0;
   if (!Number.isInteger(tag.slice) || tag.slice < 0 || tag.slice > MAX_ALGO_SLICE) throw new RangeError(`Algo slice must be an integer from 0 to ${MAX_ALGO_SLICE}`);
   if (!Number.isInteger(attempt) || attempt < 0 || attempt > MAX_ALGO_ATTEMPT) throw new RangeError(`Algo attempt must be an integer from 0 to ${MAX_ALGO_ATTEMPT}`);
-  const kind = ALGO_KIND_CODES[tag.kind];
+  const kind = Object.hasOwn(ALGO_KIND_CODES, tag.kind) ? ALGO_KIND_CODES[tag.kind] : undefined;
   if (kind === undefined) throw new RangeError(`Unknown algo kind: ${String(tag.kind)}`);
-  const originCode = CLOID_ORIGIN_CODES[origin];
+  const originCode = Object.hasOwn(CLOID_ORIGIN_CODES, origin) ? CLOID_ORIGIN_CODES[origin] : undefined;
   if (originCode === undefined) throw new RangeError(`Unknown cloid origin tag: ${String(origin)}`);
   const head =
     `${KOKOAH_CLOID_MARKER}${originCode}${KOKOAH_ALGO_CLOID_VERSION}${kind}${algoParentTag(tag.parent)}` +
