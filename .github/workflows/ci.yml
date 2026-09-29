@@ -1,17 +1,26 @@
 name: ci
 on:
   push:
+    branches: [main]
   pull_request:
-permissions:
-  contents: read
+# No token scope by default; the job asks only for what it needs.
+permissions: {}
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Pinned by commit (the same versions as the other Kokoah repos); the token is not kept in .git/config, where
+      # install, test and build code could read it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+          package-manager-cache: false
       - run: corepack enable
       # Frozen lockfile: fail if pnpm-lock.yaml does not match package.json (pnpm also defaults to this when CI=true).
       - run: pnpm install --frozen-lockfile
