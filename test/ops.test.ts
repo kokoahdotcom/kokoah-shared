@@ -12,6 +12,7 @@ import {
   slackPayloads,
   stackFrames,
   wellFormed,
+  type DiscordPayload,
   type OpsAlert,
 } from "../src/ops/index.js";
 
@@ -251,14 +252,60 @@ describe("webhooks", () => {
       n++;
       return n === 1 ? new Response('{"message":"Invalid Form Body","code":50035}', { status: 400 }) : new Response(null, { status: 204 });
     };
-    expect(await sendOpsBatch(DISCORD, { alerts: [alert(1)] }, { label: "x", fetchFn: fetchFn as typeof fetch })).toEqual({ ok: true });
+    expect(await sendOpsBatch(DISCORD, { alerts: [alert(1)] }, { label: "x", fetchFn: fetchFn as typeof fetch })).toEqual({
+      ok: true,
+      sent: { messages: 1, alerts: [0], problems: [], note: false },
+    });
     expect(JSON.parse(bodies[1]!)).toEqual({
       content: "Kokoah x: 1 alert(s) could not be formatted (50035 Invalid Form Body):\n- error: job iteration failed 1",
       username: "Kokoah alerts",
       allowed_mentions: { parse: [] },
     });
     const failing = async () => new Response(null, { status: 503 });
-    expect(await sendOpsBatch(DISCORD, { alerts: Array.from({ length: 25 }, (_, i) => alert(i)) }, { label: "x", fetchFn: failing as typeof fetch })).toEqual({ ok: false, failed: "HTTP 503" });
-    expect(await sendOpsBatch("http://hooks.example.com/x", { alerts: [alert(1)] }, { label: "x" })).toEqual({ ok: false, rejected: 0 });
+    expect(await sendOpsBatch(DISCORD, { alerts: Array.from({ length: 25 }, (_, i) => alert(i)) }, { label: "x", fetchFn: failing as typeof fetch })).toEqual({
+      ok: false,
+      failed: "HTTP 503",
+      sent: { messages: 0, alerts: [], problems: [], note: false },
+    });
+    expect(await sendOpsBatch("http://hooks.example.com/x", { alerts: [alert(1)] }, { label: "x" })).toMatchObject({ ok: false, rejected: 0 });
+  });
+
+  it("says exactly what went out before a 429 halfway, so nothing (and no mention) is posted twice", async () => {
+    const bodies: DiscordPayload[] = [];
+    const fetchFn = async (_url: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as DiscordPayload);
+      return bodies.length === 2 ? new Response('{"retry_after": 3}', { status: 429 }) : new Response(null, { status: 204 });
+    };
+    const alerts = [alert(0, { severity: "critical" }), ...Array.from({ length: 14 }, (_, i) => alert(i + 1))];
+    const problems = [{ kind: "problem" as const, subject: "engine", detail: "no heartbeat for 6 min", critical: true }];
+    const r = await sendOpsBatch(DISCORD, { alerts, problems, note: "3 more kinds of events" }, { label: "x", mention: { user: "123456789012345678" }, fetchFn: fetchFn as typeof fetch });
+    expect(r).toEqual({ ok: false, retryAfterMs: 3000, sent: { messages: 1, alerts: [0, 1, 2, 3, 4, 5, 6, 7, 8], problems: [0], note: false } });
+    expect(bodies[0]!.content).toBe("<@123456789012345678>");
+    expect(bodies[1]!.content).toBeUndefined();
+    // What is left is posted next time, without the mention (its critical items went out).
+    const left = { alerts: alerts.filter((_, i) => !r.sent.alerts.includes(i)), note: "3 more kinds of events" };
+    const again = await sendOpsBatch(DISCORD, left, { label: "x", mention: { user: "123456789012345678" }, fetchFn: (async () => new Response(null, { status: 204 })) as typeof fetch });
+    expect(again).toEqual({ ok: true, sent: { messages: 1, alerts: [0, 1, 2, 3, 4, 5], problems: [], note: true } });
+  });
+
+  it("drops a message refused even in plain form, and goes on with the rest next time", async () => {
+    let n = 0;
+    const fetchFn = async () => (++n <= 2 ? new Response('{"message":"Invalid Form Body","code":50035}', { status: 400 }) : new Response(null, { status: 204 }));
+    const r = await sendOpsBatch(DISCORD, { alerts: Array.from({ length: 12 }, (_, i) => alert(i)) }, { label: "x", fetchFn: fetchFn as typeof fetch });
+    expect(r).toEqual({ ok: false, badPayload: 400, reason: "50035 Invalid Form Body", sent: { messages: 0, alerts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], problems: [], note: false } });
+  });
+
+  it("mentions on a critical problem, never on a warning problem or an all-clear", () => {
+    const mention = { role: "123456789012345678" };
+    const [warn] = discordPayloads({ problems: [{ kind: "problem", subject: "notifications", detail: "12 waiting" }] }, { label: "x", mention });
+    expect(warn!.content).toBeUndefined();
+    expect(warn!.embeds[0]!.title).toBe("⚠️ Problem · notifications");
+    const [down] = discordPayloads({ problems: [{ kind: "problem", subject: "signer service", detail: "unreachable", critical: true }] }, { label: "x", mention });
+    expect(down!.content).toBe("<@&123456789012345678>");
+    expect(down!.allowed_mentions).toEqual({ parse: [], roles: ["123456789012345678"] });
+    expect(down!.embeds[0]!.title).toBe("🔴 Problem · signer service");
+    const [clear] = discordPayloads({ problems: [{ kind: "resolved", subject: "signer service", detail: "was: unreachable", critical: true }] }, { label: "x", mention });
+    expect(clear!.content).toBeUndefined();
+    expect(slackPayloads({ problems: [{ kind: "problem", subject: "engine", detail: "no heartbeat", critical: true }] }, { label: "x" })[0]!.text).toBe("Kokoah x:\n🔴 problem · engine: no heartbeat");
   });
 });
