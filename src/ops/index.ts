@@ -12,9 +12,11 @@
  *   ({@link OPS_COOLDOWN_MS}), never one message each.
  * - **Untrusted text can't ping or link.** Messages carry text from errors and from browsers' reports: it goes into
  *   code blocks with backticks neutralised, and `allowed_mentions` is empty except for the one configured mention on
- *   critical alerts.
+ *   critical alerts and critical health problems.
  * - **Within Discord's limits.** Title 256, description 4096, field 1024, footer 2048, 6000 characters and 10 embeds per
  *   message, 2000 for `content`; batches are split to fit. 429 answers carry the wait ({@link postOpsWebhook}).
+ * - **Partly sent is partly sent.** {@link sendOpsBatch} says which alerts and problems went out before a failure, so
+ *   a sender marks exactly those and never posts a message (or its mention) twice.
  */
 
 export type OpsSeverity = "critical" | "error" | "warning";
@@ -66,6 +68,8 @@ export interface OpsProblemNotice {
   subject: string;
   detail: string;
   since?: number;
+  /** Something is down (a service, a job, alert delivery): the problem's notice carries the configured mention. */
+  critical?: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -406,52 +410,85 @@ function alertEmbed(raw: OpsAlert, label: string): DiscordEmbed {
 function problemEmbed(raw: OpsProblemNotice, label: string): DiscordEmbed {
   const p = scrubNotice(raw);
   const resolved = p.kind === "resolved";
+  const critical = !resolved && p.critical === true;
   return {
-    title: cut(`${resolved ? "✅ Resolved" : "⚠️ Problem"} · ${plain(p.subject, 200)}`, 256),
+    title: cut(`${resolved ? "✅ Resolved" : critical ? "🔴 Problem" : "⚠️ Problem"} · ${plain(p.subject, 200)}`, 256),
     description: codeBlock(p.detail, 1200),
-    color: resolved ? COLOR.resolved : COLOR.error,
+    color: resolved ? COLOR.resolved : critical ? COLOR.critical : COLOR.error,
     ...(p.since ? { fields: [{ name: resolved ? "Lasted since" : "Since", value: `<t:${unix(p.since)}:R>`, inline: true }] } : {}),
     footer: { text: cut(label, 200) },
   };
 }
 
-/**
- * Discord messages for a batch: one embed per alert or problem, split so each message holds at most 10 embeds and
- * 6000 characters. A critical alert adds the configured mention in `content` (and only that one may ping).
- */
-export function discordPayloads(
-  batch: { alerts?: OpsAlert[]; problems?: OpsProblemNotice[]; note?: string },
-  o: { label: string; mention?: { user: string } | { role: string } | null },
-): DiscordPayload[] {
-  const embeds = [...(batch.problems ?? []).map((p) => problemEmbed(p, o.label)), ...(batch.alerts ?? []).map((a) => alertEmbed(a, o.label))];
-  if (batch.note) embeds.push({ title: "More", description: codeBlock(scrubOpsText(batch.note), 1500), color: COLOR.info, footer: { text: cut(o.label, 200) } });
-  const critical = (batch.alerts ?? []).some((a) => a.severity === "critical");
-  const out: DiscordPayload[] = [];
-  let cur: DiscordEmbed[] = [];
+export interface OpsBatch {
+  alerts?: OpsAlert[];
+  problems?: OpsProblemNotice[];
+  note?: string;
+}
+
+/** One message of a batch and what it carries (indices into the batch's alerts and problems). */
+interface OpsMessage<P> {
+  payload: P;
+  alerts: number[];
+  problems: number[];
+  note: boolean;
+}
+
+/** An alert or problem that should ping: a critical alert, or a critical problem starting. */
+const pings = (x: { alert?: OpsAlert; problem?: OpsProblemNotice }) =>
+  x.alert ? x.alert.severity === "critical" : x.problem?.kind === "problem" && x.problem.critical === true;
+
+function discordMessages(batch: OpsBatch, o: { label: string; mention?: { user: string } | { role: string } | null }): Array<OpsMessage<DiscordPayload>> {
+  type Item = { embed: DiscordEmbed; alert?: number; problem?: number; note?: true; ping: boolean };
+  const items: Item[] = [
+    ...(batch.problems ?? []).map((p, i): Item => ({ embed: problemEmbed(p, o.label), problem: i, ping: pings({ problem: p }) })),
+    ...(batch.alerts ?? []).map((a, i): Item => ({ embed: alertEmbed(a, o.label), alert: i, ping: pings({ alert: a }) })),
+  ];
+  if (batch.note) {
+    items.push({ embed: { title: "More", description: codeBlock(scrubOpsText(batch.note), 1500), color: COLOR.info, footer: { text: cut(o.label, 200) } }, note: true, ping: false });
+  }
+  const out: Array<OpsMessage<DiscordPayload>> = [];
+  let cur: Item[] = [];
   let size = 0;
+  let mentioned = false;
   const push = () => {
     if (cur.length === 0) return;
-    const mention = critical && out.length === 0 ? o.mention : null;
+    // The mention goes with the first message that holds something critical, once per batch.
+    const mention = !mentioned && cur.some((i) => i.ping) ? o.mention : null;
+    if (mention) mentioned = true;
     out.push({
-      ...(mention ? { content: "user" in mention ? `<@${mention.user}>` : `<@&${mention.role}>` } : {}),
-      username: "Kokoah alerts",
-      embeds: cur,
-      allowed_mentions: { parse: [], ...(mention ? ("user" in mention ? { users: [mention.user] } : { roles: [mention.role] }) : {}) },
+      payload: {
+        ...(mention ? { content: "user" in mention ? `<@${mention.user}>` : `<@&${mention.role}>` } : {}),
+        username: "Kokoah alerts",
+        embeds: cur.map((i) => i.embed),
+        allowed_mentions: { parse: [], ...(mention ? ("user" in mention ? { users: [mention.user] } : { roles: [mention.role] }) : {}) },
+      },
+      alerts: cur.flatMap((i) => (i.alert === undefined ? [] : [i.alert])),
+      problems: cur.flatMap((i) => (i.problem === undefined ? [] : [i.problem])),
+      note: cur.some((i) => i.note),
     });
     cur = [];
     size = 0;
   };
-  for (const e of embeds) {
-    const n = embedSize(e);
+  for (const i of items) {
+    const n = embedSize(i.embed);
     if (cur.length === 10 || size + n > 5800) push();
-    cur.push(e);
+    cur.push(i);
     size += n;
   }
   push();
   return out;
 }
 
-/** Slack-compatible `{"text"}` messages (Slack, Mattermost, Google Chat, ntfy, Discord's /slack): one per 3,500 characters. */
+/**
+ * Discord messages for a batch: one embed per alert or problem, split so each message holds at most 10 embeds and
+ * 6000 characters. The first message holding a critical alert or a critical problem adds the configured mention in
+ * `content` (and only that one may ping).
+ */
+export function discordPayloads(batch: OpsBatch, o: { label: string; mention?: { user: string } | { role: string } | null }): DiscordPayload[] {
+  return discordMessages(batch, o).map((m) => m.payload);
+}
+
 /**
  * Text for a Slack-compatible message: `&`, `<` and `>` escaped (no `<!channel>`, `<url|text>` or `<@user>`), `@` and
  * square brackets neutralised (no `@here` or `[text](url)` where the receiver renders them).
@@ -459,31 +496,43 @@ export function discordPayloads(
 const slackText = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/@/g, "＠").replace(/\[/g, "［").replace(/\]/g, "］");
 
-export function slackPayloads(batch: { alerts?: OpsAlert[]; problems?: OpsProblemNotice[]; note?: string }, o: { label: string }): Array<{ text: string }> {
-  const lines: string[] = [];
-  batch = { ...batch, alerts: (batch.alerts ?? []).map(scrubAlert), problems: (batch.problems ?? []).map(scrubNotice), ...(batch.note ? { note: scrubOpsText(batch.note) } : {}) };
-  for (const p of batch.problems ?? []) lines.push(`${p.kind === "resolved" ? "✓ resolved" : "⚠ problem"} · ${slackText(p.subject)}: ${slackText(cut(p.detail, 300))}`);
-  for (const a of batch.alerts ?? []) {
+function slackMessages(raw: OpsBatch, o: { label: string }): Array<OpsMessage<{ text: string }>> {
+  const batch = { ...raw, alerts: (raw.alerts ?? []).map(scrubAlert), problems: (raw.problems ?? []).map(scrubNotice), ...(raw.note ? { note: scrubOpsText(raw.note) } : {}) };
+  const lines: Array<{ text: string; alert?: number; problem?: number; note?: true }> = [];
+  for (const [i, p] of batch.problems.entries()) {
+    const head = p.kind === "resolved" ? "✓ resolved" : p.critical ? "🔴 problem" : "⚠ problem";
+    lines.push({ text: `${head} · ${slackText(p.subject)}: ${slackText(cut(p.detail, 300))}`, problem: i });
+  }
+  for (const [i, a] of batch.alerts.entries()) {
     const seen = a.repeat ? `×${a.newCount} more (${a.totalCount} in all)` : a.newCount > 1 ? `×${a.newCount}` : "first time";
     const ctx = Object.entries(a.context)
       .map(([k, v]) => `${k}=${String(v)}`)
       .join(" ");
-    lines.push(
-      `${EMOJI[a.severity]} ${a.severity.toUpperCase()} · ${slackText(a.source)}: ${slackText(a.title)} (${seen})${a.detail ? `\n    ${slackText(cut(a.detail.split("\n")[0] ?? "", 300))}` : ""}${ctx ? `\n    ${slackText(cut(ctx, 300))}` : ""}`,
-    );
+    lines.push({
+      text: `${EMOJI[a.severity]} ${a.severity.toUpperCase()} · ${slackText(a.source)}: ${slackText(a.title)} (${seen})${a.detail ? `\n    ${slackText(cut(a.detail.split("\n")[0] ?? "", 300))}` : ""}${ctx ? `\n    ${slackText(cut(ctx, 300))}` : ""}`,
+      alert: i,
+    });
   }
-  if (batch.note) lines.push(slackText(batch.note));
-  const out: Array<{ text: string }> = [];
-  let text = `Kokoah ${o.label}:`;
+  if (batch.note) lines.push({ text: slackText(batch.note), note: true });
+  const out: Array<OpsMessage<{ text: string }>> = [];
+  let cur: OpsMessage<{ text: string }> = { payload: { text: `Kokoah ${o.label}:` }, alerts: [], problems: [], note: false };
   for (const l of lines) {
-    if (text.length + l.length + 1 > 3500) {
-      out.push({ text });
-      text = `Kokoah ${o.label} (continued):`;
+    if (cur.payload.text.length + l.text.length + 1 > 3500) {
+      out.push(cur);
+      cur = { payload: { text: `Kokoah ${o.label} (continued):` }, alerts: [], problems: [], note: false };
     }
-    text += `\n${l}`;
+    cur.payload.text += `\n${l.text}`;
+    if (l.alert !== undefined) cur.alerts.push(l.alert);
+    if (l.problem !== undefined) cur.problems.push(l.problem);
+    if (l.note) cur.note = true;
   }
-  if (lines.length > 0) out.push({ text });
+  if (lines.length > 0) out.push(cur);
   return out;
+}
+
+/** Slack-compatible `{"text"}` messages (Slack, Mattermost, Google Chat, ntfy, Discord's /slack): one per 3,500 characters. */
+export function slackPayloads(batch: OpsBatch, o: { label: string }): Array<{ text: string }> {
+  return slackMessages(batch, o).map((m) => m.payload);
 }
 
 export type OpsPostResult =
@@ -543,29 +592,62 @@ export async function postOpsWebhook(url: string, payload: unknown, fetchFn: typ
 }
 
 /**
- * Posts a batch in as many messages as it needs, in order, stopping at the first failure (the caller keeps what wasn't
- * sent). A message the receiver refuses as malformed is replaced once by a short plain notice listing the titles, so
- * an alert is never lost to a formatting problem.
+ * What a batch post delivered: the messages that went out, and the alerts, problems (indices into the batch) and note
+ * they carried. A message the receiver refused even in plain form counts as delivered: posting it again won't help.
+ */
+export interface OpsBatchSent {
+  messages: number;
+  alerts: number[];
+  problems: number[];
+  note: boolean;
+}
+
+export type OpsBatchResult = OpsPostResult & { sent: OpsBatchSent };
+
+/**
+ * Posts a batch in as many messages as it needs, in order, stopping at the first failure; `sent` says what went out
+ * before it, so the caller marks exactly that and keeps the rest (a 429 halfway never posts the earlier messages, or
+ * their mention, again). A message the receiver refuses as malformed is replaced once by a short plain notice listing
+ * its titles, so an alert is never lost to a formatting problem.
  */
 export async function sendOpsBatch(
   url: string,
-  batch: { alerts?: OpsAlert[]; problems?: OpsProblemNotice[]; note?: string },
+  batch: OpsBatch,
   o: { label: string; mention?: { user: string } | { role: string } | null; fetchFn?: typeof fetch },
-): Promise<OpsPostResult> {
+): Promise<OpsBatchResult> {
+  const sent: OpsBatchSent = { messages: 0, alerts: [], problems: [], note: false };
   const kind = opsWebhookKind(url);
-  if ("problem" in kind) return { ok: false, rejected: 0 };
-  const payloads: unknown[] = kind.kind === "discord" ? discordPayloads(batch, o) : slackPayloads(batch, o);
+  if ("problem" in kind) return { ok: false, rejected: 0, sent };
+  const messages: Array<OpsMessage<unknown>> = kind.kind === "discord" ? discordMessages(batch, o) : slackMessages(batch, o);
+  const carried = (m: OpsMessage<unknown>) => {
+    sent.alerts.push(...m.alerts);
+    sent.problems.push(...m.problems);
+    sent.note ||= m.note;
+  };
   let wait = 0;
-  for (const payload of payloads) {
+  for (const m of messages) {
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-    let r = await postOpsWebhook(url, payload, o.fetchFn);
+    let r = await postOpsWebhook(url, m.payload, o.fetchFn);
     if (!r.ok && "badPayload" in r) {
-      const titles = [...(batch.problems ?? []).map((p) => p.subject), ...(batch.alerts ?? []).map((a) => `${a.severity}: ${a.title}`)];
+      const titles = [
+        ...m.problems.map((i) => batch.problems![i]!.subject),
+        ...m.alerts.map((i) => `${batch.alerts![i]!.severity}: ${batch.alerts![i]!.title}`),
+        ...(m.note ? ["(a note with more events)"] : []),
+      ];
       const text = cut(`Kokoah ${o.label}: ${titles.length} alert(s) could not be formatted (${r.reason}):\n- ${titles.map((t) => plain(t, 150)).join("\n- ")}`, 1900);
-      r = await postOpsWebhook(url, kind.kind === "discord" ? { content: text, username: "Kokoah alerts", allowed_mentions: { parse: [] } } : { text }, o.fetchFn);
+      const retry = await postOpsWebhook(url, kind.kind === "discord" ? { content: text, username: "Kokoah alerts", allowed_mentions: { parse: [] } } : { text }, o.fetchFn);
+      if (retry.ok || "badPayload" in retry) {
+        // Posted in plain form, or refused in that form too: either way this message is done with.
+        carried(m);
+        if (retry.ok) sent.messages++;
+      }
+      r = retry;
+    } else if (r.ok) {
+      carried(m);
+      sent.messages++;
     }
-    if (!r.ok) return r;
+    if (!r.ok) return { ...r, sent };
     wait = r.waitMs ?? 0;
   }
-  return { ok: true };
+  return { ok: true, sent };
 }
