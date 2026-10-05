@@ -177,6 +177,31 @@ describe("order limits", () => {
     expect(codes(evalIntent({ kind: "updateIsolatedMargin", coin: "SOL", amountUsd: "5", origin: "manual" }))).toEqual(["COIN_NOT_ALLOWED"]);
   });
 
+  it("with requireLeverage, an entry whose leverage is unknown is refused instead of going unchecked", () => {
+    const required = { requireLeverage: true };
+    // Without the flag an unknown leverage stays unchecked, as before.
+    expect(evalIntent(entry()).allowed).toBe(true);
+    expect(codes(evalIntent(entry(), required))).toEqual(["LEVERAGE_EXCEEDED"]);
+    const other = evalIntent(entry(), { ...required, leverageByCoin: { ETH: 5 } });
+    expect(other.violations.map((v) => v.message)).toEqual(["BTC: the account's current leverage is unknown, so the 10x maximum can't be checked."]);
+    expect(evalIntent(entry(), { ...required, leverageByCoin: { BTC: 10 } }).allowed).toBe(true);
+    expect(codes(evalIntent(entry(), { ...required, leverageByCoin: { BTC: 40 } }))).toEqual(["LEVERAGE_EXCEEDED"]);
+    // A modify of an entry too, on the intent and on the compiled wire action.
+    const modify = { kind: "modify", target: { oid: 1 }, order: { coin: "BTC", side: "buy", orderType: "limit", size: "0.1", price: "100000" }, origin: "manual" } as ActionIntentInput;
+    const withStop = { ...required, hasStopLoss: () => true };
+    expect(codes(evalIntent(modify, withStop))).toEqual(["LEVERAGE_EXCEEDED"]);
+    expect(evalIntent(modify, { ...withStop, leverageByCoin: { BTC: 3 } }).allowed).toBe(true);
+    const compiled = compileAction(parseActionIntent(modify), { registry, builder: { address: BUILDER.b, feeTenthsBps: BUILDER.f }, now: NOW });
+    expect(codes(evaluatePolicy({ kind: "compiled", compiled }, ctx(withStop)))).toEqual(["LEVERAGE_EXCEEDED"]);
+    expect(codes(evaluatePolicy({ kind: "compiled", compiled }, ctx({ ...withStop, leverageByCoin: { BTC: 40 } })))).toEqual(["LEVERAGE_EXCEEDED"]);
+    expect(evaluatePolicy({ kind: "compiled", compiled }, ctx({ ...withStop, leverageByCoin: { BTC: 10 } })).allowed).toBe(true);
+    // Reduce-only orders, stops and cancels need no leverage.
+    const close = entry({ side: "sell", reduceOnly: true, stopLoss: undefined, tif: "Ioc", price: "99000" });
+    expect(evalIntent(close, required).allowed).toBe(true);
+    expect(evalIntent({ ...modify, order: { ...(modify as { order: object }).order, reduceOnly: true } } as ActionIntentInput, required).allowed).toBe(true);
+    expect(evalIntent({ kind: "cancel", cancels: [{ coin: "BTC", oid: 1 }], origin: "manual" }, required).allowed).toBe(true);
+  });
+
   it("enforces orders per minute (cancels exempt)", () => {
     expect(codes(evalIntent(entry(), { ordersInLastMinute: 9 }))).toEqual(["ORDER_RATE_EXCEEDED"]); // parent + SL = 2 orders
     expect(evalIntent({ kind: "cancel", cancels: [{ coin: "BTC", oid: 1 }], origin: "manual" }, { ordersInLastMinute: 100 }).allowed).toBe(true);

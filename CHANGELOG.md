@@ -7,6 +7,9 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `policy`: `PolicyContext.requireLeverage` (opt-in). Every perp entry leg (not reduce-only) must then have its coin in
+  `leverageByCoin`; a missing one is `LEVERAGE_EXCEEDED` instead of an unchecked leg. The signer service sets it with
+  the leverage it reads itself; other callers keep the old behaviour.
 - `errors`: `AGENT_LIMIT` for Hyperliquid's refusal of a named agent past the account's allowance ("Too many extra
   agents for cumulative volume traded. Current limit is 3"), with `details.agentLimit`.
 - `ops` (new entry point): operator alerts shared by the backend and the signer service. `scrubOpsText` (credentials,

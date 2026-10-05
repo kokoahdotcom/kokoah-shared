@@ -86,6 +86,12 @@ export interface PolicyContext {
   hasStopLoss?: (coin: string) => boolean;
   /** Current leverage setting per coin, when known. */
   leverageByCoin?: Readonly<Record<string, number>>;
+  /**
+   * Every perp entry leg (not reduce-only) must have its coin in `leverageByCoin`: a missing one is `LEVERAGE_EXCEEDED`
+   * instead of a leg whose leverage goes unchecked. For signers that read the account's leverage themselves (the signer
+   * service); previews and callers without it leave it unset and keep checking only what they know.
+   */
+  requireLeverage?: boolean;
   /** Daily loss lock (guardian) active: new entries are denied, reduce-only is allowed. */
   lossLockActive?: boolean;
   /**
@@ -335,10 +341,12 @@ function checkOrderLegs(
       });
       for (const p of check.problems) add("PRICE_OUTSIDE_BAND", p);
     }
-    // Leverage of the market, when known.
+    // Leverage of the market, when known (and required to be known with `requireLeverage`).
     const lev = leg.spot ? undefined : context.leverageByCoin?.[leg.coin];
     if (!leg.reduceOnly && lev !== undefined && !(lev <= policy.maxLeverage)) {
       add("LEVERAGE_EXCEEDED", `${leg.coin} is set to ${lev}x, above the policy maximum of ${policy.maxLeverage}x.`);
+    } else if (!leg.reduceOnly && !leg.spot && lev === undefined && context.requireLeverage === true) {
+      add("LEVERAGE_EXCEEDED", `${leg.coin}: the account's current leverage is unknown, so the ${policy.maxLeverage}x maximum can't be checked.`);
     }
   }
   if (!(context.dailyNotionalUsedUsd + actionNotional <= policy.maxDailyNotionalUsd)) {
