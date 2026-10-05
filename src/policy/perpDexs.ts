@@ -17,7 +17,7 @@ export interface PerpDexPin {
   deployer: `0x${string}`;
 }
 
-/** Every HIP-3 dex on mainnet as of 2026-09-28 (HL `perpDexs`). */
+/** Every HIP-3 dex on mainnet as of 2026-09-28 (HL `perpDexs`; unchanged on 2026-10-05). */
 export const VERIFIED_PERP_DEXS: { readonly mainnet: readonly PerpDexPin[] } = {
   mainnet: [
     { name: "xyz", fullName: "XYZ", deployer: "0x88806a71d74ad0a510b350545c9ae490912f0888" },

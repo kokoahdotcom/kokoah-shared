@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { perpDexProblem, VERIFIED_PERP_DEXS } from "../src/policy/index.js";
+import { fixture } from "./helpers.js";
 
 describe("verified HIP-3 dexes", () => {
   const xyz = VERIFIED_PERP_DEXS.mainnet.find((d) => d.name === "xyz")!;
@@ -17,6 +18,12 @@ describe("verified HIP-3 dexes", () => {
   it("accepts any listed dex on testnet (test money)", () => {
     expect(perpDexProblem("testnet", "tndex", { name: "tndex", deployer: "0x1111111111111111111111111111111111111111" })).toBeUndefined();
     expect(perpDexProblem("testnet", "tndex", undefined)).toMatch(/Unknown HIP-3 dex/);
+  });
+
+  it("match every HIP-3 dex of the captured mainnet perpDexs, name and deployer (re-checked live 2026-10-05)", () => {
+    const live = fixture<Array<{ name: string; fullName: string; deployer: string } | null>>("mainnet-perpDexs.json").filter((d) => d !== null);
+    for (const d of live) expect(perpDexProblem("mainnet", d.name, d)).toBeUndefined();
+    expect(live.map((d) => ({ name: d.name, fullName: d.fullName, deployer: d.deployer.toLowerCase() }))).toEqual(VERIFIED_PERP_DEXS.mainnet);
   });
 
   it("pins lowercase addresses and unique names", () => {
