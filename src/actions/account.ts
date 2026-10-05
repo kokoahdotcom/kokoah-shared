@@ -1,11 +1,14 @@
 /**
- * Account actions a Kokoah trading key may sign besides trading: setting Kokoah's own Hyperliquid referral code, and
- * starting Hyperliquid's fee trial. Both are L1 actions (signed by the agent key like an order; Hyperliquid's own app
- * signs both with its agent) and both apply to the master account only.
+ * Account actions a Kokoah trading key may sign besides trading: setting Kokoah's own Hyperliquid referral code,
+ * starting Hyperliquid's fee trial, depositing into HLP and withdrawing from a vault the account holds. All are L1
+ * actions (signed by the agent key like an order; Hyperliquid's own app signs them with its agent) and all apply to
+ * the master account only.
  *
  * The intents carry nothing a caller could abuse: the referral code comes from the signer's own trusted configuration
  * (`compileAccountAction`'s `referralCode`), and the fee trial names a VIP tier by number, whose rates come from the
- * fee schedule the signer read from Hyperliquid itself (`feeTiers`), never from the intent.
+ * fee schedule the signer read from Hyperliquid itself (`feeTiers`), never from the intent. An HLP deposit names
+ * only an amount: the vault is the signer's own HLP address for its network (`hlpVaultAddress`); a vault withdrawal
+ * names the vault, and the signer checks on Hyperliquid that the account holds that much in it (`vaults/hlp.ts`).
  *
  * `startFeeTrial` is `{type, addBaseRate, crossBaseRate}` with the tier's maker and taker base rates as decimal
  * strings, formatted as Hyperliquid's app does (`toFixed(8)`, trailing zeros trimmed, at least one decimal). Neither
@@ -13,13 +16,14 @@
  *
  * @module
  */
-import { SetReferrerRequest } from "@nktkas/hyperliquid/api/exchange";
+import { SetReferrerRequest, VaultTransferRequest } from "@nktkas/hyperliquid/api/exchange";
 import { canonicalize } from "@nktkas/hyperliquid/signing";
 import * as v from "valibot";
+import { usdToVaultUnits } from "../vaults/hlp.js";
 import { CompileError } from "./compile.js";
 
 /** Account action intent kinds. */
-export const ACCOUNT_INTENT_KINDS = ["setReferrer", "startFeeTrial"] as const;
+export const ACCOUNT_INTENT_KINDS = ["setReferrer", "startFeeTrial", "hlpDeposit", "vaultWithdraw"] as const;
 export type AccountIntentKind = (typeof ACCOUNT_INTENT_KINDS)[number];
 
 /** Set Kokoah's Hyperliquid referral code on the account (the code comes from the signer's configuration). */
@@ -40,8 +44,29 @@ export const StartFeeTrialIntentSchema = v.strictObject({
   tier: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(20)),
 });
 
-/** Any account action intent. Strict: unknown keys (a code, a vaultAddress, …) are rejected. */
-export const AccountIntentSchema = v.variant("kind", [SetReferrerIntentSchema, StartFeeTrialIntentSchema]);
+/** A USDC amount as a decimal string with at most 6 decimals ("250", "12.5"). */
+const UsdAmount = v.pipe(v.string(), v.regex(/^(0|[1-9]\d{0,11})(\.\d{1,6})?$/, "Amount must be a decimal USDC amount with at most 6 decimals"));
+
+/**
+ * Deposit `usd` USDC into HLP. No vault address: the signer uses its own HLP address for its network, and applies
+ * the deposit caps and its own confirmation (`vaults/hlp.ts`).
+ */
+export const HlpDepositIntentSchema = v.strictObject({
+  kind: v.literal("hlpDeposit"),
+  origin: v.literal("manual"),
+  usd: UsdAmount,
+});
+
+/** Withdraw `usd` USDC from `vaultAddress` back into the account (the signer checks the account holds that much there). */
+export const VaultWithdrawIntentSchema = v.strictObject({
+  kind: v.literal("vaultWithdraw"),
+  origin: v.literal("manual"),
+  vaultAddress: v.pipe(v.string(), v.regex(/^0x[0-9a-fA-F]{40}$/, "vaultAddress must be a 20-byte hex address")),
+  usd: UsdAmount,
+});
+
+/** Any account action intent. Strict: unknown keys (a code, a vaultAddress on a deposit, …) are rejected. */
+export const AccountIntentSchema = v.variant("kind", [SetReferrerIntentSchema, StartFeeTrialIntentSchema, HlpDepositIntentSchema, VaultWithdrawIntentSchema]);
 export type AccountIntent = v.InferOutput<typeof AccountIntentSchema>;
 export type AccountIntentInput = v.InferInput<typeof AccountIntentSchema>;
 
@@ -93,8 +118,10 @@ export function feeTrialRate(rate: string | number): string {
   const out = fixed.endsWith(".") ? `${fixed}0` : fixed;
   return out === "-0.0" ? "0.0" : out;
 }
+/** Wire `vaultTransfer` action (SDK schema): `usd` is USDC × 10^6. */
+export type HlVaultTransferAction = v.InferOutput<typeof VaultTransferRequest>["action"];
 /** Every wire account action. */
-export type HlAccountAction = HlSetReferrerAction | HlStartFeeTrialAction;
+export type HlAccountAction = HlSetReferrerAction | HlStartFeeTrialAction | HlVaultTransferAction;
 
 /** A compiled account action: sign `action` exactly (master account; no `vaultAddress`). */
 export interface CompiledAccountAction {
@@ -108,13 +135,15 @@ export const REFERRAL_CODE_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 /**
  * Compiles an account action intent into its wire action. `referralCode` is the signer's own configured code
  * (`setReferrer` fails with `UNSUPPORTED` without one); `feeTiers` is the VIP tier list the signer read from
- * Hyperliquid's `userFees` itself (`startFeeTrial` fails with `INVALID_INTENT` for a tier that isn't there).
+ * Hyperliquid's `userFees` itself (`startFeeTrial` fails with `INVALID_INTENT` for a tier that isn't there);
+ * `hlpVaultAddress` is the signer's own HLP address for its network (`hlpDeposit` fails with `UNSUPPORTED` without one).
+ * Compiling checks shape only: the vault rules (caps, held equity) are the signer's (`vaultTransferProblems`).
  *
  * @throws {CompileError}
  */
 export function compileAccountAction(
   input: AccountIntent | AccountIntentInput,
-  options: { referralCode?: string | null; feeTiers?: ReadonlyArray<FeeTierRates> } = {},
+  options: { referralCode?: string | null; feeTiers?: ReadonlyArray<FeeTierRates>; hlpVaultAddress?: `0x${string}` | null } = {},
 ): CompiledAccountAction {
   const parsed = safeParseAccountIntent(input);
   if (!parsed.success) throw new CompileError("INVALID_INTENT", `Invalid intent: ${parsed.issues.map((i) => i.message).join("; ")}`);
@@ -140,6 +169,21 @@ export function compileAccountAction(
         throw new CompileError("INVALID_INTENT", `Fee tier ${intent.tier} has malformed rates: ${e instanceof Error ? e.message : String(e)}`);
       }
       return { action: { type: "startFeeTrial", addBaseRate, crossBaseRate }, intent };
+    }
+    case "hlpDeposit":
+    case "vaultWithdraw": {
+      const vault = intent.kind === "hlpDeposit" ? options.hlpVaultAddress : intent.vaultAddress;
+      if (intent.kind === "hlpDeposit" && (typeof vault !== "string" || vault === "")) throw new CompileError("UNSUPPORTED", "No HLP vault address is configured");
+      if (typeof vault !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(vault)) throw new CompileError("INVALID_INTENT", "The vault address must be a 20-byte hex address");
+      let usd: number;
+      try {
+        usd = usdToVaultUnits(intent.usd);
+      } catch (e) {
+        throw new CompileError("INVALID_INTENT", e instanceof Error ? e.message : String(e));
+      }
+      const schema = VaultTransferRequest.entries.action;
+      const action = canonicalize(schema, v.parse(schema, { type: "vaultTransfer", vaultAddress: vault.toLowerCase(), isDeposit: intent.kind === "hlpDeposit", usd }));
+      return { action, intent };
     }
   }
 }

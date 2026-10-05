@@ -56,7 +56,8 @@ export type PolicyViolationCode =
   | "BUILDER_REQUIRED"
   | "BUILDER_MISMATCH"
   | "SPOT_NOT_ALLOWED"
-  | "FEE_TRIAL_UNAVAILABLE";
+  | "FEE_TRIAL_UNAVAILABLE"
+  | "VAULT_DEPOSIT_LIMIT";
 
 /**
  * Hard-denied action types and the code each is denied with. Never signable by a Kokoah agent key, with one exception:
