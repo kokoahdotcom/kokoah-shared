@@ -92,6 +92,11 @@
       "import": "./dist/ops/index.js",
       "default": "./dist/ops/index.js"
     },
+    "./vaults": {
+      "types": "./dist/vaults/index.d.ts",
+      "import": "./dist/vaults/index.js",
+      "default": "./dist/vaults/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

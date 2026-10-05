@@ -28,7 +28,9 @@ from hyperliquid.utils.signing import (
     sign_inner,
     sign_l1_action,
     sign_send_asset_action,
+    sign_token_delegate_action,
     sign_user_set_abstraction_action,
+    sign_user_signed_action,
     sign_withdraw_from_bridge_action,
     user_signed_payload,
 )
@@ -375,6 +377,50 @@ l1(
     False,
     note="raw action (no SDK method); shape from Hyperliquid's app code",
 )
+
+# vaultTransfer, exactly as Exchange.vault_usd_transfer builds it (an L1 action; usd is USDC x 10^6). Trading keys may
+# deposit into HLP only (vaults/hlp.ts), and withdraw from any vault the account holds.
+HLP_MAINNET = "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303"
+HLP_TESTNET = "0xa15099a30bbf2e68942d6f4c43d70d04faeab0a0"
+l1(
+    "hlp_deposit_mainnet",
+    {"type": "vaultTransfer", "vaultAddress": HLP_MAINNET, "isDeposit": True, "usd": 250_000_000},
+    True,
+    expires_after=EXPIRES_AFTER,
+)
+l1("hlp_deposit_testnet", {"type": "vaultTransfer", "vaultAddress": HLP_TESTNET, "isDeposit": True, "usd": 5_000_000}, False)
+l1(
+    "vault_withdraw_testnet",
+    {"type": "vaultTransfer", "vaultAddress": VAULT, "isDeposit": False, "usd": 12_500_000},
+    False,
+    expires_after=EXPIRES_AFTER,
+)
+
+# tokenDelegate, as Exchange.token_delegate builds it (wei is HYPE x 10^8).
+user_signed(
+    "token_delegate_mainnet",
+    {"validator": DESTINATION, "wei": 150_000_000, "isUndelegate": False, "nonce": NONCE, "type": "tokenDelegate"},
+    sign_token_delegate_action,
+    True,
+)
+user_signed(
+    "token_undelegate_testnet",
+    {"validator": DESTINATION, "wei": 1, "isUndelegate": True, "nonce": NONCE, "type": "tokenDelegate"},
+    sign_token_delegate_action,
+    False,
+)
+
+# cDeposit / cWithdraw (HYPE between spot and the staking balance): no SDK method; the SDK's generic user-signed path
+# with the types from Hyperliquid's docs.
+C_TYPES = [{"name": "hyperliquidChain", "type": "string"}, {"name": "wei", "type": "uint64"}, {"name": "nonce", "type": "uint64"}]
+
+
+def c_signer(primary):
+    return lambda wallet, action, is_mainnet: sign_user_signed_action(wallet, action, C_TYPES, primary, is_mainnet)
+
+
+user_signed("c_deposit_mainnet", {"type": "cDeposit", "wei": 1_000_000_000, "nonce": NONCE}, c_signer("HyperliquidTransaction:CDeposit"), True)
+user_signed("c_withdraw_testnet", {"type": "cWithdraw", "wei": 50_000_000, "nonce": NONCE}, c_signer("HyperliquidTransaction:CWithdraw"), False)
 
 # Same scheme with a different signatureChainId (Arbitrum One, 0xa4b1), bypassing the SDK's 0x66eee default.
 custom = {

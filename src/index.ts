@@ -8,3 +8,4 @@ export * from "./signing/index.js";
 export * from "./policy/index.js";
 export * from "./errors/index.js";
 export * from "./guardians/index.js";
+export * from "./vaults/index.js";

@@ -10,6 +10,10 @@ import {
   buildAccountMode,
   buildApproveAgent,
   buildApproveBuilderFee,
+  buildStakingDeposit,
+  buildStakingWithdraw,
+  buildTokenDelegate,
+  HLP_VAULT_ADDRESSES,
   buildSendAsset,
   buildWithdraw,
   compileAccountAction,
@@ -25,7 +29,16 @@ import {
   signUserSignedAction,
   type PreparedUserSignedAction,
 } from "../src/index.js";
-import { ApproveAgentTypes, ApproveBuilderFeeTypes, SendAssetTypes, UserSetAbstractionTypes, Withdraw3Types } from "@nktkas/hyperliquid/api/exchange";
+import {
+  ApproveAgentTypes,
+  ApproveBuilderFeeTypes,
+  CDepositTypes,
+  CWithdrawTypes,
+  SendAssetTypes,
+  TokenDelegateTypes,
+  UserSetAbstractionTypes,
+  Withdraw3Types,
+} from "@nktkas/hyperliquid/api/exchange";
 
 interface Vector {
   name: string;
@@ -280,6 +293,35 @@ describe("compileAccountAction produces the startFeeTrial actions signed with th
   }
 });
 
+describe("compileAccountAction produces the exact vaultTransfer actions the Python SDK signs", () => {
+  for (const [name, intent, hlp] of [
+    ["hlp_deposit_mainnet", { kind: "hlpDeposit", origin: "manual", usd: "250" }, HLP_VAULT_ADDRESSES.mainnet],
+    ["hlp_deposit_testnet", { kind: "hlpDeposit", origin: "manual", usd: "5" }, HLP_VAULT_ADDRESSES.testnet],
+    ["vault_withdraw_testnet", { kind: "vaultWithdraw", origin: "manual", vaultAddress: "0x2222222222222222222222222222222222222222", usd: "12.5" }, null],
+  ] as const) {
+    it(name, async () => {
+      const v = vec(name);
+      const compiled = compileAccountAction(intent, hlp ? { hlpVaultAddress: hlp } : {});
+      expect(JSON.stringify(compiled.action)).toBe(JSON.stringify(v.action));
+      const sig = await signL1Action({
+        wallet: privateKeyToAccount(v.privateKey),
+        network: { isTestnet: !v.isMainnet },
+        action: compiled.action as unknown as Record<string, unknown>,
+        nonce: v.nonce,
+        expiresAfter: v.expiresAfter ?? undefined,
+      });
+      sameSig(sig, v.signature);
+    });
+  }
+});
+
+/** Staking `wei` (HYPE × 10^8) as a HYPE decimal string, exactly. */
+function weiToHype(wei: number): string {
+  const s = wei.toString().padStart(9, "0");
+  const frac = s.slice(-8).replace(/0+$/, "");
+  return frac ? `${s.slice(0, -8)}.${frac}` : s.slice(0, -8);
+}
+
 describe("user-signed signatures match the Python SDK", () => {
   function prepare(v: Vector): { prepared: PreparedUserSignedAction; types: Record<string, ReadonlyArray<{ name: string; type: string }>> } {
     const network = getNetworkConfig(v.isMainnet ? "mainnet" : "testnet");
@@ -338,6 +380,22 @@ describe("user-signed signatures match the Python SDK", () => {
           }),
           types: UserSetAbstractionTypes,
         };
+      case "tokenDelegate":
+        return {
+          prepared: buildTokenDelegate({
+            validator: a.validator as `0x${string}`,
+            amount: weiToHype(Number(a.wei)),
+            undelegate: Boolean(a.isUndelegate),
+            nonce: v.nonce,
+            network,
+            signatureChainId,
+          }),
+          types: TokenDelegateTypes,
+        };
+      case "cDeposit":
+        return { prepared: buildStakingDeposit({ amount: weiToHype(Number(a.wei)), nonce: v.nonce, network, signatureChainId }), types: CDepositTypes };
+      case "cWithdraw":
+        return { prepared: buildStakingWithdraw({ amount: weiToHype(Number(a.wei)), nonce: v.nonce, network, signatureChainId }), types: CWithdrawTypes };
       default:
         throw new Error(`unexpected ${String(a.type)}`);
     }

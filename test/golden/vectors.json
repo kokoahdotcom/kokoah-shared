@@ -1017,6 +1017,156 @@
       "note": "raw action (no SDK method); shape from Hyperliquid's app code"
     },
     {
+      "name": "hlp_deposit_mainnet",
+      "kind": "l1",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": 1790000015000,
+      "action": {
+        "type": "vaultTransfer",
+        "vaultAddress": "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303",
+        "isDeposit": true,
+        "usd": 250000000
+      },
+      "connectionId": "0x76ac19114a638367f65ab5ce4f717bffda43b10cae2b1d405194ddd5979a48d9",
+      "signature": {
+        "r": "0xf06ba15c1809c60eaef126cd556741c9769af09e6c794ae79337bae72b70fddd",
+        "s": "0x1bf7c00bec1552b8fd57d306d0ff03eff910ff37dfb393af216a628018b1c64d",
+        "v": 28
+      }
+    },
+    {
+      "name": "hlp_deposit_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": null,
+      "action": {
+        "type": "vaultTransfer",
+        "vaultAddress": "0xa15099a30bbf2e68942d6f4c43d70d04faeab0a0",
+        "isDeposit": true,
+        "usd": 5000000
+      },
+      "connectionId": "0x2870078f79506d311bcb80f4f5bc3c3866c7c11b45581340a356bf15c8094b8b",
+      "signature": {
+        "r": "0x3f97d699bf621b27cba0fc540d05ca6f5ca63625d0156ce36e7677030a007877",
+        "s": "0x3ab1eb9e49b738b656147c17b4da210394fd42d963d34ace717cf79bb45405bc",
+        "v": 27
+      }
+    },
+    {
+      "name": "vault_withdraw_testnet",
+      "kind": "l1",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "vaultAddress": null,
+      "expiresAfter": 1790000015000,
+      "action": {
+        "type": "vaultTransfer",
+        "vaultAddress": "0x2222222222222222222222222222222222222222",
+        "isDeposit": false,
+        "usd": 12500000
+      },
+      "connectionId": "0xef8e9e25905306f24b6e783ecdbbab03d27a3848998b821c8bda4c24ab1fddda",
+      "signature": {
+        "r": "0xdf9bb174d6d15157bf4d8c67a830d405f498a45d55531330f15b0cf1d60a9bbc",
+        "s": "0x4bd7c94a1c9756ef46dbdf65a176e3fa314bbf0a12fd17639ca587f69531244e",
+        "v": 27
+      }
+    },
+    {
+      "name": "token_delegate_mainnet",
+      "kind": "userSigned",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "validator": "0x3333333333333333333333333333333333333333",
+        "wei": 150000000,
+        "isUndelegate": false,
+        "nonce": 1790000000000,
+        "type": "tokenDelegate",
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Mainnet"
+      },
+      "signature": {
+        "r": "0xc700802eee91f92d4ab37ac91bcf8a76998daaf5e33885627ed271d027b1311f",
+        "s": "0x2d066326b7e570544b12e66f082d90b26ba8d0ec8249e3cd29164efe2b12daca",
+        "v": 27
+      }
+    },
+    {
+      "name": "token_undelegate_testnet",
+      "kind": "userSigned",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "validator": "0x3333333333333333333333333333333333333333",
+        "wei": 1,
+        "isUndelegate": true,
+        "nonce": 1790000000000,
+        "type": "tokenDelegate",
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Testnet"
+      },
+      "signature": {
+        "r": "0xc64ffb2a4d79dabe7744cc4e4500a3d0b0f79b988eb6af722e79d41182b36001",
+        "s": "0x4ebd22b589ffe651304c6d49ef1c56cdc5437aa7035a1bd2796c890b64306bd3",
+        "v": 27
+      }
+    },
+    {
+      "name": "c_deposit_mainnet",
+      "kind": "userSigned",
+      "isMainnet": true,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "type": "cDeposit",
+        "wei": 1000000000,
+        "nonce": 1790000000000,
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Mainnet"
+      },
+      "signature": {
+        "r": "0x7d73727a5f673294086c57895a7f90886cfa23fe2135f351ade4e480784c738a",
+        "s": "0x3f9c399f1c80efacc3d4630ec8b3709a2982b9c07436b3f72fff6dbf5451ce3b",
+        "v": 27
+      }
+    },
+    {
+      "name": "c_withdraw_testnet",
+      "kind": "userSigned",
+      "isMainnet": false,
+      "privateKey": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "signer": "0xfcad0b19bb29d4674531d6f115237e16afce377c",
+      "nonce": 1790000000000,
+      "action": {
+        "type": "cWithdraw",
+        "wei": 50000000,
+        "nonce": 1790000000000,
+        "signatureChainId": "0x66eee",
+        "hyperliquidChain": "Testnet"
+      },
+      "signature": {
+        "r": "0xc90dc7b37e79f1daf29ad27f1c2e35ee45c4cf23ede133461b4252e6c2bfcbad",
+        "s": "0x25dc5bf487f023cc6a6b467150ea84667c96cde609da3fda53521262c1ec936e",
+        "v": 27
+      }
+    },
+    {
       "name": "approve_builder_fee_chain_a4b1_mainnet",
       "kind": "userSigned",
       "isMainnet": true,
