@@ -28,9 +28,10 @@ const needs = (over: Partial<BotLimitNeeds> = {}): BotLimitNeeds => ({
 describe("bot limits", () => {
   it("lists every limit the default policy is too tight on", () => {
     const short = botLimitShortfalls(reduceOnly(), needs());
-    expect(short.map((s) => s.field)).toEqual(["allowedOrigins", "maxOrderNotionalUsd", "maxDailyNotionalUsd", "maxLeverage", "botEntriesWithoutStopLoss"]);
-    expect(short[0]).toEqual({ field: "allowedOrigins", label: "Order origin", current: "guardian", needed: "also bots (bot)" });
-    expect(short[1]).toEqual({ field: "maxOrderNotionalUsd", label: "Max order size", current: "$1", needed: "$77" });
+    expect(short.map((s) => s.field)).toEqual(["allowedActionTypes", "allowedOrigins", "maxOrderNotionalUsd", "maxDailyNotionalUsd", "maxLeverage", "botEntriesWithoutStopLoss"]);
+    expect(short[0]).toMatchObject({ field: "allowedActionTypes", needed: "also updateLeverage" });
+    expect(short[1]).toEqual({ field: "allowedOrigins", label: "Order origin", current: "guardian", needed: "also bots (bot)" });
+    expect(short[2]).toEqual({ field: "maxOrderNotionalUsd", label: "Max order size", current: "$1", needed: "$77" });
   });
 
   it("raises only what is short and keeps everything else", () => {
@@ -48,7 +49,8 @@ describe("bot limits", () => {
     // Untouched fields.
     expect(next.requiredBuilder).toEqual(builder);
     expect(next.maxExpiresAfterWindowMs).toBe(base.maxExpiresAfterWindowMs);
-    expect(next.allowedActionTypes).toEqual(base.allowedActionTypes);
+    // Bots lower a coin's leverage to the signed maximum themselves before entering it.
+    expect(next.allowedActionTypes).toEqual([...base.allowedActionTypes, "updateLeverage"]);
     // Still a valid policy.
     expect(parsePolicy(next)).toEqual(next);
     // Any market for a copy bot without an allow list.
@@ -57,9 +59,9 @@ describe("bot limits", () => {
 
   it("adds missing bot actions and refuses needs above the bounds", () => {
     const tight = parsePolicy({ ...reduceOnly(), allowedActionTypes: ["order", "noop"] });
-    expect(botLimitShortfalls(tight, needs())[0]).toMatchObject({ field: "allowedActionTypes", needed: "also cancel, cancelByCloid" });
+    expect(botLimitShortfalls(tight, needs())[0]).toMatchObject({ field: "allowedActionTypes", needed: "also cancel, cancelByCloid, updateLeverage" });
     expect(botLimitShortfalls(tight, needs())[1]).toMatchObject({ field: "allowedOrigins", needed: "also bots (bot)" });
-    expect(policyForBots(tight, needs()).allowedActionTypes).toEqual(["order", "noop", "cancel", "cancelByCloid"]);
+    expect(policyForBots(tight, needs()).allowedActionTypes).toEqual(["order", "noop", "cancel", "cancelByCloid", "updateLeverage"]);
     expect(() => policyForBots(tight, needs({ maxOrderNotionalUsd: 2_000_000 }))).toThrow(BotLimitsTooHighError);
     expect(() => policyForBots(tight, needs({ dailyNotionalUsd: 30_000_000, maxLeverage: 60 }))).toThrow(/daily volume.*leverage/);
   });

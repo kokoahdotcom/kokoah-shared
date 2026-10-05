@@ -32,8 +32,12 @@ export interface BotLimitNeeds {
   vaultAddresses?: string[];
 }
 
-/** Actions every bot needs: place orders and cancel its own (by cloid) or by order id. */
-export const BOT_ACTION_TYPES = ["order", "cancel", "cancelByCloid"] as const;
+/**
+ * Actions every bot needs: place orders, cancel its own (by cloid) or by order id, and lower a coin's leverage to the
+ * signed maximum before its first entry there (`updateLeverage`; every coin starts at about 20x, and a copy bot can't
+ * know its coins ahead; `evaluatePolicy` never lets it go above `maxLeverage`).
+ */
+export const BOT_ACTION_TYPES = ["order", "cancel", "cancelByCloid", "updateLeverage"] as const;
 
 /** Upper bounds a bot policy may be raised to (the same as the automation limits form). */
 export const BOT_POLICY_BOUNDS = Object.freeze({
