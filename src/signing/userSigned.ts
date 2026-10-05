@@ -9,8 +9,8 @@
  *
  * The builders here return both the **typed data** (for `walletClient.signTypedData` / wagmi `useSignTypedData`) and
  * the **action** to post, derived from one set of inputs so they cannot drift apart. Types come from the SDK
- * (`ApproveAgentTypes`, `ApproveBuilderFeeTypes`, `Withdraw3Types`, `SendAssetTypes`, `UserSetAbstractionTypes`,
- * `CDepositTypes`, `CWithdrawTypes`, `TokenDelegateTypes`).
+ * (`ApproveAgentTypes`, `ApproveBuilderFeeTypes`, `Withdraw3Types`, `SendAssetTypes`, `UserSetAbstractionTypes`).
+ * HYPE staking is in `staking.ts`, so apps load it only where they stake.
  *
  * @module
  */
@@ -19,14 +19,8 @@ import {
   ApproveAgentTypes,
   ApproveBuilderFeeRequest,
   ApproveBuilderFeeTypes,
-  CDepositRequest,
-  CDepositTypes,
-  CWithdrawRequest,
-  CWithdrawTypes,
   SendAssetRequest,
   SendAssetTypes,
-  TokenDelegateRequest,
-  TokenDelegateTypes,
   UserSetAbstractionRequest,
   UserSetAbstractionTypes,
   Withdraw3Request,
@@ -38,7 +32,6 @@ import { hashTypedData, recoverTypedDataAddress } from "viem";
 import type { NetworkConfig } from "../network/index.js";
 import { normalizeDecimal, toNumber } from "../precision/index.js";
 import { MAX_PERP_BUILDER_FEE_TENTHS_BPS, tenthsBpsToPercentString } from "../risk/formulas.js";
-import { decimalToUnits } from "../vaults/hlp.js";
 import { signatureToHex, ZERO_ADDRESS } from "./l1.js";
 
 /** EIP-712 field list. */
@@ -164,7 +157,7 @@ export function buildApproveAgent(params: ApproveAgentParams): PreparedUserSigne
   const now = params.now ?? params.nonce;
   if (params.validUntil <= now) throw new RangeError("validUntil must be in the future");
   if (params.validUntil > now + MAX_AGENT_VALIDITY_MS) throw new RangeError("validUntil must be at most 180 days in the future");
-  return prepare(
+  return prepareUserSigned(
     ApproveAgentRequest.entries.action,
     ApproveAgentTypes,
     {
@@ -182,7 +175,7 @@ export function buildApproveAgent(params: ApproveAgentParams): PreparedUserSigne
  * removes an agent (research B §1.6; the zero address for named agents is inferred — verify with the testnet spike).
  */
 export function buildRevokeAgent(params: { agentName: string; nonce: number; network: UserSignedNetwork; signatureChainId?: `0x${string}` }): PreparedUserSignedAction {
-  return prepare(
+  return prepareUserSigned(
     ApproveAgentRequest.entries.action,
     ApproveAgentTypes,
     { type: "approveAgent", agentAddress: ZERO_ADDRESS, agentName: formatAgentName(params.agentName), nonce: params.nonce },
@@ -213,7 +206,7 @@ export function buildApproveBuilderFee(params: ApproveBuilderFeeParams): Prepare
   if (!Number.isInteger(params.maxFeeTenthsBps) || params.maxFeeTenthsBps < 0 || params.maxFeeTenthsBps > MAX_PERP_BUILDER_FEE_TENTHS_BPS) {
     throw new RangeError(`maxFeeTenthsBps must be an integer between 0 and ${MAX_PERP_BUILDER_FEE_TENTHS_BPS} (0.1%)`);
   }
-  return prepare(
+  return prepareUserSigned(
     ApproveBuilderFeeRequest.entries.action,
     ApproveBuilderFeeTypes,
     {
@@ -242,7 +235,7 @@ export function buildWithdraw(params: {
   signatureChainId?: `0x${string}`;
 }): PreparedUserSignedAction {
   if (!/^0x[0-9a-fA-F]{40}$/.test(params.destination)) throw new RangeError("destination must be a 20-byte hex address");
-  return prepare(
+  return prepareUserSigned(
     Withdraw3Request.entries.action,
     Withdraw3Types,
     { type: "withdraw3", destination: params.destination.toLowerCase(), amount: normalizeDecimal(params.amount), time: params.nonce },
@@ -306,7 +299,7 @@ export function buildSendAsset(params: SendAssetParams): PreparedUserSignedActio
   if (!token) throw new RangeError('token must be "name:tokenId" (a 16-byte hex token id)');
   const amount = normalizeDecimal(params.amount);
   if (amount.startsWith("-") || !(toNumber(amount) > 0)) throw new RangeError("amount must be above zero");
-  return prepare(
+  return prepareUserSigned(
     SendAssetRequest.entries.action,
     SendAssetTypes,
     {
@@ -394,7 +387,7 @@ export function buildAccountMode(params: {
   if (!(ACCOUNT_MODES as readonly string[]).includes(params.abstraction)) {
     throw new RangeError(`abstraction must be one of ${ACCOUNT_MODES.join(", ")}`);
   }
-  return prepare(
+  return prepareUserSigned(
     UserSetAbstractionRequest.entries.action,
     UserSetAbstractionTypes,
     { type: "userSetAbstraction", user: params.user.toLowerCase(), abstraction: params.abstraction, nonce: params.nonce },
@@ -403,61 +396,9 @@ export function buildAccountMode(params: {
 }
 
 // ---------------------------------------------------------------------------------------------
-// HYPE staking: cDeposit, cWithdraw, tokenDelegate
-// ---------------------------------------------------------------------------------------------
 
-/** Staking amounts (`wei`) are HYPE × 10^8, an integer. */
-export const HYPE_WEI_DECIMALS = 8;
-
-/** HYPE → staking `wei` (× 10^8), exactly: at most 8 decimals, above zero, within a safe integer. */
-export function hypeToWei(amount: string | number): number {
-  return decimalToUnits(amount, HYPE_WEI_DECIMALS, "HYPE amount");
-}
-
-/** Parameters shared by the staking builders. */
-export interface StakingAmountParams {
-  /** HYPE, as a decimal (at most 8 decimals). */
-  amount: string | number;
-  nonce: number;
-  network: UserSignedNetwork;
-  signatureChainId?: `0x${string}`;
-}
-
-/**
- * Builds `cDeposit` (`HyperliquidTransaction:CDeposit`): moves HYPE from the spot balance to the staking balance.
- * The main wallet signs it; the signed fields are the network, the amount (`wei`, HYPE × 10^8) and the nonce.
- */
-export function buildStakingDeposit(params: StakingAmountParams): PreparedUserSignedAction {
-  return prepare(CDepositRequest.entries.action, CDepositTypes, { type: "cDeposit", wei: hypeToWei(params.amount), nonce: params.nonce }, params);
-}
-
-/**
- * Builds `cWithdraw` (`HyperliquidTransaction:CWithdraw`): starts moving undelegated HYPE from the staking balance
- * back to spot (Hyperliquid releases it after 7 days).
- */
-export function buildStakingWithdraw(params: StakingAmountParams): PreparedUserSignedAction {
-  return prepare(CWithdrawRequest.entries.action, CWithdrawTypes, { type: "cWithdraw", wei: hypeToWei(params.amount), nonce: params.nonce }, params);
-}
-
-/**
- * Builds `tokenDelegate` (`HyperliquidTransaction:TokenDelegate`): delegates staking-balance HYPE to `validator`, or
- * takes it back with `undelegate` (a delegation is locked for a day after it is made). `validator` is lowercased.
- */
-export function buildTokenDelegate(params: StakingAmountParams & { validator: `0x${string}`; undelegate: boolean }): PreparedUserSignedAction {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(params.validator)) throw new RangeError("validator must be a 20-byte hex address");
-  if (params.validator.toLowerCase() === ZERO_ADDRESS) throw new RangeError("validator must not be the zero address");
-  if (typeof params.undelegate !== "boolean") throw new RangeError("undelegate must be a boolean");
-  return prepare(
-    TokenDelegateRequest.entries.action,
-    TokenDelegateTypes,
-    { type: "tokenDelegate", validator: params.validator.toLowerCase(), wei: hypeToWei(params.amount), isUndelegate: params.undelegate, nonce: params.nonce },
-    params,
-  );
-}
-
-// ---------------------------------------------------------------------------------------------
-
-function prepare(
+/** Builds a user-signed action from one set of fields (shared by every builder, including `staking.ts`). */
+export function prepareUserSigned(
   schema: v.GenericSchema,
   types: Eip712Types,
   fields: Record<string, unknown> & { type: string },
