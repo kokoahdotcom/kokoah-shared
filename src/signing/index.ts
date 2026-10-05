@@ -6,5 +6,6 @@
  */
 export * from "./l1.js";
 export * from "./userSigned.js";
+export * from "./staking.js";
 export * from "./nonce.js";
 export * from "./request.js";
