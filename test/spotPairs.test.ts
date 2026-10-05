@@ -4,6 +4,7 @@ import {
   SPOT_ORDER_MAX_SHARE_OF_DAY_VOLUME,
   spotOrderCapUsd,
   spotOrderVolumeProblem,
+  spotPairDisplayName,
   spotTokenTrust,
   STABLECOIN_PAIRS,
   USDC_TOKEN,
@@ -82,6 +83,19 @@ describe("verified spot pairs", () => {
     for (const u of outside) expect(spotTokenTrust("mainnet", m.tokens.find((t) => t.index === u.tokens[0])!)).toBe("unverified");
     // Testnet pins never count on mainnet.
     expect(spotTokenTrust("mainnet", { name: "HYPE", index: 1105, tokenId: "0x7317beb7cceed72ef0b346074cc8e7ab" })).toBe("unverified");
+  });
+});
+
+describe("spot pair display name", () => {
+  it("reads a policy coin id as base/quote from the pinned lists, per network, no spotMeta needed", () => {
+    expect(spotPairDisplayName("mainnet", "@107")).toBe("HYPE/USDC");
+    expect(spotPairDisplayName("mainnet", "@166")).toBe("USDT0/USDC");
+    expect(spotPairDisplayName("mainnet", "PURR/USDC")).toBe("PURR/USDC");
+    expect(spotPairDisplayName("testnet", "@1115")).toBe("TZERO/USDC");
+    // The same id can name different tokens per network, so the network decides.
+    expect(spotPairDisplayName("testnet", "@166")).toBe("@166");
+    // A coin id on neither list (never in a signer-accepted policy) is returned unchanged.
+    expect(spotPairDisplayName("mainnet", "@99999")).toBe("@99999");
   });
 });
 

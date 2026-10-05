@@ -142,6 +142,17 @@ export function verifiedSpotPairCoins(network: SpotNetwork): string[] {
 }
 
 /**
+ * A readable name for a policy's spot coin id (`allowedSpotCoins`, e.g. `@107`) as `base/quote` (e.g. `HYPE/USDC`),
+ * from the pinned stablecoin and verified lists. These are the only coins a signer allows spot on, so a wallet showing
+ * what the user signs needs no `spotMeta` fetch. A coin id on neither list (which a signer-accepted policy never holds)
+ * is returned unchanged.
+ */
+export function spotPairDisplayName(network: SpotNetwork, coin: string): string {
+  const pair = STABLECOIN_PAIRS[network].find((p) => p.coin === coin) ?? VERIFIED_SPOT_PAIRS[network].find((p) => p.coin === coin);
+  return pair ? `${pair.base.name}/${pair.quote.name}` : coin;
+}
+
+/**
  * The pinned pairs of `network` (stablecoins first, then verified tokens) that the live `spotMeta` confirms exactly.
  * Anything that differs is left out (fail closed). Pass only a `spotMeta` the caller fetched from Hyperliquid itself.
  */
