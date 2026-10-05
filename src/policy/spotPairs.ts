@@ -43,9 +43,9 @@ const pin = (coin: string, index: number, name: string, tokenIndex: number, toke
 /**
  * Verified token/USDC pairs by network: the tokens of Hyperliquid's own "Strict" spot list (the base-token ids its web
  * app hard-codes and shows by default; `series-DoSu52JX.js`, read 2026-09-25) that have a USDC pair, pinned from
- * `spotMeta` on 2026-09-25. Stablecoins of Convert (`STABLECOIN_PAIRS`) are not repeated here. Left out: AXL on
- * mainnet and UAVAX on testnet (no USDC pair). Many of these trade thinly; signers add a per-order volume cap on
- * mainnet ({@link spotOrderVolumeProblem}).
+ * `spotMeta` on 2026-09-25 (every pin still matched mainnet `spotMeta` on 2026-10-05). Stablecoins of Convert
+ * (`STABLECOIN_PAIRS`) are not repeated here. Left out: AXL on mainnet and UAVAX on testnet (no USDC pair). Many of
+ * these trade thinly; signers add a per-order volume cap on mainnet ({@link spotOrderVolumeProblem}).
  */
 export const VERIFIED_SPOT_PAIRS: Readonly<Record<SpotNetwork, readonly SpotPairPin[]>> = Object.freeze({
   mainnet: Object.freeze<SpotPairPin[]>([

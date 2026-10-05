@@ -13,7 +13,10 @@
  */
 import { decDecimals, decSign, normalize, parseDec, PrecisionError, type Dec } from "../precision/decimal.js";
 
-/** HLP's address per network (Hyperliquid's docs and the Python SDK's vault transfer example). */
+/**
+ * HLP's address per network (Hyperliquid's docs and the Python SDK's vault transfer example). Mainnet's was checked with
+ * `vaultDetails` on 2026-10-05: "Hyperliquidity Provider (HLP)", open to deposits, 4-day lock-up.
+ */
 export const HLP_VAULT_ADDRESSES: Readonly<Record<"mainnet" | "testnet", `0x${string}`>> = Object.freeze({
   mainnet: "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303",
   testnet: "0xa15099a30bbf2e68942d6f4c43d70d04faeab0a0",
