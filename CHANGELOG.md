@@ -7,6 +7,15 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `policy`: policy signatures in typed-data format 2 (EIP-712 domain "Kokoah Policy", version "2",
+  `POLICY_EIP712_TYPES_V2`): besides format 1's fields, the wallet shows `allowedOrigins`, `allowedSubAccounts`,
+  `reduceOnlyExemptFromCaps`, `maxDailyLossUsd`, `maxStopLossDistancePct`, `botsWithoutStopLoss`,
+  `maxActionLifetimeMs`, `allowedSpotPairs`, `spotTrading` and `referralCode`, so no policy field is bound only through
+  `policyHash` any more. `PolicyAuthorization.typedDataVersion` names the format (omitted: 1, the original);
+  `buildPolicyTypedData`, `recoverPolicySigner` and `verifyPolicySignature` use the format it names, so format 1
+  signatures keep verifying. `preparePolicySignature` starts a new signature in `POLICY_TYPED_DATA_VERSION` (2).
+  `policyTypedDataFields(version)` lists a format's fields with the policy fields each shows. The policy schema, its
+  `version` and its hash are unchanged; format 1's types and golden digest are unchanged.
 - `policy`: `PolicyContext.requireLeverage` (opt-in). Every perp entry leg (not reduce-only) must then have its coin in
   `leverageByCoin`; a missing one is `LEVERAGE_EXCEEDED` instead of an unchecked leg. The signer service sets it with
   the leverage it reads itself; other callers keep the old behaviour.
