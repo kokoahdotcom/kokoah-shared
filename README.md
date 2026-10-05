@@ -243,8 +243,19 @@ const body2 = await prepareL1Request({ wallet: agentAccount, network: net, compi
 ### `policy`
 `PolicySchema`, `parsePolicy`, `evaluatePolicy(subject, context)`, `DENIED_ACTION_TYPES`,
 `ALLOWLISTABLE_ACTION_TYPES`, presets `createManualTradingPolicy` / `createGuardianPolicy`, and signed policies:
-`buildPolicyTypedData`, `verifyPolicySignature`, `recoverPolicySigner`, `hashPolicy`, `canonicalPolicyJson`,
-`summarizePolicy`.
+`preparePolicySignature`, `buildPolicyTypedData`, `verifyPolicySignature`, `recoverPolicySigner`, `hashPolicy`,
+`canonicalPolicyJson`, `policyTypedDataFields`, `summarizePolicy`.
+
+Signed policies come in two typed-data formats, named by `authorization.typedDataVersion` (the EIP-712 domain version
+of "Kokoah Policy", so the signature binds it). **Format 2** (`POLICY_EIP712_TYPES_V2`, `POLICY_TYPED_DATA_VERSION`)
+shows every policy field in the wallet: lists sorted and comma-separated, `*` for all, `none` for none, `unlimited`
+for a limit that isn't set; values that would read ambiguously (a comma, `*` or `none` in a list, the referral code
+`none`) are refused. **Format 1** (`POLICY_EIP712_TYPES`, `typedDataVersion` omitted) is the original: sub-accounts,
+origins, the daily loss limit, stop-loss exceptions, the reduce-only exemption, spot, the referral code and the
+`expiresAfter` window are bound only through `policyHash`. New signatures use format 2 (`preparePolicySignature`
+returns the authorization to send and the typed data to sign); format 1 signatures keep verifying. The policy, its
+`version` (1) and its hash are the same in both. `policyTypedDataFields(version)` lists a format's fields in order with
+the policy and authorization fields each one shows.
 
 ```ts
 const decision = evaluatePolicy({ kind: "compiled", compiled, expiresAfter }, {
@@ -498,7 +509,9 @@ interface PolicyContext {
   midPrices?: Record<string, number>; // evaluator's own book mids: refines which limits are marketable
 }
 
-function buildPolicyTypedData(policy: PolicyInput | Policy, auth: { user; agent?; network: "Mainnet" | "Testnet"; chainId; issuedAt; expiresAt; nonce });
+function preparePolicySignature(policy: PolicyInput | Policy, auth: PolicyAuthorization): { authorization: PolicyAuthorization /* typedDataVersion: 2 unless given */; typedData };
+function buildPolicyTypedData(policy: PolicyInput | Policy, auth: { user; agent?; network: "Mainnet" | "Testnet"; chainId; issuedAt; expiresAt; nonce; typedDataVersion?: 1 | 2 /* omitted: 1 */ });
+function policyTypedDataFields(version?: 1 | 2 /* default 2 */): Array<{ name: string; type: string; shows: PolicyFieldName[] }>;
 function verifyPolicySignature(signed: { policy; authorization; signature: `0x${string}` }, options?: { now?: number /* default Date.now() */; ignoreExpiry?: boolean; clockSkewMs?: number /* issuedAt tolerance, default 0; services: 300_000 */ }): Promise<boolean>;
 ```
 
@@ -564,9 +577,10 @@ function assessOrderRisk(input: OrderRiskInput): OrderRiskAssessment;
 - **Fees:** pass the user's effective rates from `userFees` (after referral/staking discounts) or the HIP-3 market's own
   (growth-mode) rates; the library does not derive them.
 - Spot orders compile (8-decimal price rule, builder up to 1000) but the product and tests focus on perps.
-- `verifyPolicySignature` supports EOA signatures only (no ERC-1271 smart-contract wallets). Fields not shown in the
-  typed data (vault addresses, origins, expiresAfter window, stop distance, reduce-only exemption) are bound only by
-  `policyHash`; the UI must show them before the user signs.
+- `verifyPolicySignature` supports EOA signatures only (no ERC-1271 smart-contract wallets). Policies signed in typed-data
+  format 1 bind some fields (sub-accounts, origins, the daily loss limit, stop-loss exceptions, the expiresAfter window,
+  the reduce-only exemption, spot, the referral code) only by `policyHash`; a UI describing such a stored policy must
+  verify its signature first and show those fields itself. Format 2 shows every field.
 - Market orders on markets with coarse ticks: when one tick is wider than the slippage tolerance, the IOC price is one
   tick beyond the tolerance (to stay marketable).
 - The policy has no per-action cap on `updateIsolatedMargin` amounts (HL itself keeps initial margin on removal).

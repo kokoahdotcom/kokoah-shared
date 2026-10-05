@@ -14,8 +14,15 @@ import {
   hashPolicy,
   parsePolicy,
   type Policy,
+  type PolicyAuthorization,
   type PolicyContext,
+  POLICY_EIP712_TYPES,
+  POLICY_EIP712_TYPES_V2,
+  POLICY_TYPED_DATA_VERSION,
+  PolicySchema,
+  policyTypedDataFields,
   PolicyValidationError,
+  preparePolicySignature,
   recoverPolicySigner,
   summarizePolicy,
   verifyPolicySignature,
@@ -356,6 +363,198 @@ describe("signed policies (EIP-712)", () => {
     expect(() => buildPolicyTypedData(policy, { ...auth, expiresAt: auth.issuedAt })).toThrow(RangeError);
     expect(() => buildPolicyTypedData(policy, { ...auth, user: "0x12" as `0x${string}` })).toThrow(RangeError);
     expect(() => buildPolicyTypedData(policy, { ...auth, chainId: 0 })).toThrow(RangeError);
+    expect(() => buildPolicyTypedData(policy, { ...auth, typedDataVersion: 3 as never })).toThrow(/typedDataVersion must be 1 or 2/);
+  });
+});
+
+describe("signed policies, format 2 (every field readable)", () => {
+  const user = privateKeyToAccount(generatePrivateKey());
+  const auth: PolicyAuthorization = { user: user.address, network: "Testnet", chainId: 421614, issuedAt: NOW, expiresAt: NOW + 30 * 86_400_000, nonce: 1 };
+  const v2 = { ...auth, typedDataVersion: 2 as const };
+  const at = { now: NOW + 1 };
+  const shown = (m: Record<string, unknown>, n: Record<string, unknown>) => Object.keys(m).filter((k) => k !== "policyHash" && m[k] !== n[k]).sort();
+
+  /** One change to every policy field; adding a field to the schema fails to compile here until it has one. */
+  const changes: Record<Exclude<keyof Policy, "version">, Partial<Policy>> = {
+    allowedActionTypes: { allowedActionTypes: [...policy.allowedActionTypes, "batchModify"] },
+    allowedCoins: { allowedCoins: "*" },
+    maxOrderNotionalUsd: { maxOrderNotionalUsd: 1 },
+    maxDailyNotionalUsd: { maxDailyNotionalUsd: 1 },
+    maxDailyLossUsd: { maxDailyLossUsd: 500 },
+    maxLeverage: { maxLeverage: 3 },
+    requireStopLossForNewEntries: { requireStopLossForNewEntries: false },
+    maxStopLossDistancePct: { maxStopLossDistancePct: 5 },
+    botEntriesWithoutStopLoss: { botEntriesWithoutStopLoss: true },
+    maxOrdersPerMinute: { maxOrdersPerMinute: 1 },
+    priceBandPct: { priceBandPct: 1 },
+    allowedVaultAddresses: { allowedVaultAddresses: [] },
+    requiredBuilder: { requiredBuilder: null },
+    maxExpiresAfterWindowMs: { maxExpiresAfterWindowMs: null },
+    allowedOrigins: { allowedOrigins: ["guardian"] },
+    exemptReduceOnlyFromNotionalCaps: { exemptReduceOnlyFromNotionalCaps: false },
+    allowedSpotCoins: { allowedSpotCoins: ["@166"] },
+    spotTrading: { spotTrading: true },
+    referralCode: { referralCode: "KOKOAH" },
+  };
+
+  it("new signatures use format 2 and verify; the format is bound by the signature", async () => {
+    expect(POLICY_TYPED_DATA_VERSION).toBe(2);
+    const { authorization, typedData } = preparePolicySignature(policy, auth);
+    expect(authorization).toEqual({ ...auth, typedDataVersion: 2 });
+    expect(typedData).toEqual(buildPolicyTypedData(policy, authorization));
+    expect(typedData.domain).toEqual({ name: "Kokoah Policy", version: "2", chainId: 421614 });
+    expect(typedData.types.KokoahPolicy).toEqual(POLICY_EIP712_TYPES_V2.KokoahPolicy);
+    const signature = await user.signTypedData(typedData);
+    const signed = { policy, authorization, signature };
+    expect(await verifyPolicySignature(signed, at)).toBe(true);
+    expect((await recoverPolicySigner(signed)).toLowerCase()).toBe(user.address.toLowerCase());
+    // The same signature claimed as format 1 (or with the format left out) recovers someone else.
+    expect(await verifyPolicySignature({ ...signed, authorization: auth }, at)).toBe(false);
+    expect(await verifyPolicySignature({ ...signed, authorization: { ...auth, typedDataVersion: 1 } }, at)).toBe(false);
+    expect(await verifyPolicySignature({ ...signed, authorization: { ...auth, typedDataVersion: 3 as never } }, at)).toBe(false);
+    // Any change to the policy still fails, through the readable fields and through policyHash.
+    for (const change of Object.values(changes)) expect(await verifyPolicySignature({ ...signed, policy: { ...policy, ...change } }, at)).toBe(false);
+    // An explicit format is kept.
+    expect(preparePolicySignature(policy, { ...auth, typedDataVersion: 1 }).authorization.typedDataVersion).toBe(1);
+  });
+
+  it("format 1 signatures keep verifying, also with the format named explicitly", async () => {
+    const signature = await user.signTypedData(buildPolicyTypedData(policy, auth));
+    expect(await verifyPolicySignature({ policy, authorization: auth, signature }, at)).toBe(true);
+    expect(await verifyPolicySignature({ policy, authorization: { ...auth, typedDataVersion: 1 }, signature }, at)).toBe(true);
+    expect(await verifyPolicySignature({ policy, authorization: v2, signature }, at)).toBe(false);
+    expect(buildPolicyTypedData(policy, { ...auth, typedDataVersion: 1 })).toEqual(buildPolicyTypedData(policy, auth));
+  });
+
+  it("golden: format 2's type and digest are pinned", () => {
+    const manual = createManualTradingPolicy({ builder: BUILDER });
+    const td = buildPolicyTypedData(manual, {
+      user: "0x3333333333333333333333333333333333333333",
+      network: "Testnet",
+      chainId: 421614,
+      issuedAt: 1_790_000_000_000,
+      expiresAt: 1_790_000_000_000 + 86_400_000,
+      nonce: 7,
+      typedDataVersion: 2,
+    });
+    expect(hashPolicy(manual)).toBe("0xb4bb1459bcb66f6add58b01f7cf7ae6b74286fdfb0cbad7130cde014ed5ab776"); // the policy hash is the same in both formats
+    expect(hashTypedData(td)).toBe("0x19f9b9b7f18e2a18b9007ff1b9ccaf6a86949228a7c8a3b3b6953aa140aa959d"); // also eth_account (Python)
+  });
+
+  it("shows every field of the policy in readable form", () => {
+    const full = parsePolicy({
+      ...policy,
+      allowedVaultAddresses: ["0x2222222222222222222222222222222222222222", "0x1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],
+      allowedOrigins: ["guardian", "bot", "guardian"],
+      maxDailyLossUsd: 250.5,
+      maxStopLossDistancePct: 7.5,
+      botEntriesWithoutStopLoss: true,
+      exemptReduceOnlyFromNotionalCaps: false,
+      allowedSpotCoins: ["@166", "@107"],
+      spotTrading: true,
+      referralCode: "KOKOAH",
+    });
+    const td = buildPolicyTypedData(full, { ...v2, agent: "0x4444444444444444444444444444444444444444" });
+    expect(td.message).toEqual({
+      user: user.address.toLowerCase(),
+      agent: "0x4444444444444444444444444444444444444444",
+      network: "Testnet",
+      allowedActions: "cancel,cancelByCloid,modify,noop,order,scheduleCancel,updateIsolatedMargin,updateLeverage",
+      allowedMarkets: "BTC,ETH,xyz:SP500",
+      allowedOrigins: "bot,guardian",
+      allowedSubAccounts: "0x1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,0x2222222222222222222222222222222222222222",
+      maxOrderNotionalUsd: "50000",
+      maxDailyNotionalUsd: "200000",
+      reduceOnlyExemptFromCaps: false,
+      maxDailyLossUsd: "250.5",
+      maxLeverage: 10,
+      stopLossRequired: true,
+      maxStopLossDistancePct: "7.5",
+      botsWithoutStopLoss: true,
+      maxOrdersPerMinute: 10,
+      priceBandPct: "3",
+      maxActionLifetimeMs: "30000",
+      allowedSpotPairs: "@107,@166",
+      spotTrading: true,
+      referralCode: "KOKOAH",
+      builder: BUILDER.b,
+      builderFeeTenthsBps: 25,
+      canWithdrawOrTransfer: false,
+      policyHash: hashPolicy(full),
+      issuedAt: NOW,
+      expiresAt: NOW + 30 * 86_400_000,
+      nonce: 1,
+    });
+    // In the order of the type, as wallets that show the message raw list it.
+    expect(Object.keys(td.message)).toEqual(POLICY_EIP712_TYPES_V2.KokoahPolicy.map((f) => f.name));
+    // What is not set reads "*" (all origins), "none" (no sub-accounts, spot pairs or referral code) or "unlimited".
+    const bare = parsePolicy({ ...policy, allowedVaultAddresses: [], maxExpiresAfterWindowMs: null, allowedSpotCoins: [] });
+    expect(buildPolicyTypedData(bare, v2).message).toMatchObject({
+      allowedOrigins: "*",
+      allowedSubAccounts: "none",
+      reduceOnlyExemptFromCaps: true,
+      maxDailyLossUsd: "unlimited",
+      maxStopLossDistancePct: "unlimited",
+      botsWithoutStopLoss: false,
+      maxActionLifetimeMs: "unlimited",
+      allowedSpotPairs: "none",
+      spotTrading: false,
+      referralCode: "none",
+    });
+  });
+
+  it("every policy field changes a readable field in format 2 (format 1 showed some only through policyHash)", () => {
+    const fields2 = policyTypedDataFields();
+    const fields1 = policyTypedDataFields(1);
+    const base2 = buildPolicyTypedData(policy, v2).message as Record<string, unknown>;
+    const base1 = buildPolicyTypedData(policy, auth).message as Record<string, unknown>;
+    const hiddenInV1: string[] = [];
+    for (const [key, change] of Object.entries(changes)) {
+      const changed = { ...policy, ...change };
+      expect(hashPolicy(changed), key).not.toBe(hashPolicy(policy));
+      const m2 = buildPolicyTypedData(changed, v2).message as Record<string, unknown>;
+      expect(shown(m2, base2), key).toEqual(fields2.filter((f) => f.shows.includes(key as never)).map((f) => f.name).sort());
+      expect(shown(m2, base2).length, key).toBeGreaterThan(0);
+      const m1 = buildPolicyTypedData(changed, auth).message as Record<string, unknown>;
+      expect(shown(m1, base1), key).toEqual(fields1.filter((f) => f.shows.includes(key as never)).map((f) => f.name).sort());
+      if (shown(m1, base1).length === 0) hiddenInV1.push(key);
+    }
+    expect(hiddenInV1.sort()).toEqual(
+      [
+        "allowedOrigins",
+        "allowedSpotCoins",
+        "allowedVaultAddresses",
+        "botEntriesWithoutStopLoss",
+        "exemptReduceOnlyFromNotionalCaps",
+        "maxDailyLossUsd",
+        "maxExpiresAfterWindowMs",
+        "maxStopLossDistancePct",
+        "referralCode",
+        "spotTrading",
+      ].sort(),
+    );
+  });
+
+  it("lists the readable fields: format 2 shows every policy and authorization field", () => {
+    const fields = policyTypedDataFields();
+    expect(fields.map(({ name, type }) => ({ name, type }))).toEqual(POLICY_EIP712_TYPES_V2.KokoahPolicy);
+    expect(policyTypedDataFields(1).map(({ name, type }) => ({ name, type }))).toEqual(POLICY_EIP712_TYPES.KokoahPolicy);
+    const shownKeys = new Set(fields.flatMap((f) => f.shows));
+    const policyKeys = Object.keys(PolicySchema.entries).filter((k) => k !== "version");
+    expect(policyKeys.filter((k) => !shownKeys.has(k as never))).toEqual([]);
+    for (const k of ["user", "agent", "network", "issuedAt", "expiresAt", "nonce"]) expect(shownKeys.has(k as never), k).toBe(true);
+    // Format 1's types are unchanged (wallet decoders match them exactly).
+    expect(POLICY_EIP712_TYPES.KokoahPolicy.length).toBe(18);
+  });
+
+  it("refuses values format 2 couldn't show unambiguously", () => {
+    expect(() => buildPolicyTypedData({ ...policy, allowedCoins: ["BTC", "none"] }, v2)).toThrow(/allowedCoins has an entry/);
+    expect(() => buildPolicyTypedData({ ...policy, allowedCoins: ["*"] }, v2)).toThrow(/allowedCoins has an entry/);
+    expect(() => buildPolicyTypedData({ ...policy, allowedCoins: ["BTC,ETH"] }, v2)).toThrow(/allowedCoins has an entry/);
+    expect(() => buildPolicyTypedData({ ...policy, allowedSpotCoins: ["NONE"] }, v2)).toThrow(/allowedSpotCoins has an entry/);
+    expect(() => buildPolicyTypedData({ ...policy, referralCode: "None" }, v2)).toThrow(/referralCode can't be shown/);
+    // Format 1 builds them as before (existing signatures keep verifying).
+    expect(buildPolicyTypedData({ ...policy, allowedCoins: ["*"] }, auth).message.allowedMarkets).toBe("*");
   });
 });
 
