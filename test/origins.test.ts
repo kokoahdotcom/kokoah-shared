@@ -131,7 +131,8 @@ describe("stop-loss exemption for bots only", () => {
 describe("bot grants", () => {
   it("asks for the bot origin and the bot exemption instead of turning the requirement off", () => {
     const p = automation();
-    expect(botLimitShortfalls(p, needs).map((s) => s.field)).toEqual(["allowedOrigins", "botEntriesWithoutStopLoss"]);
+    // Bots also lower a coin's leverage to the signed maximum themselves (updateLeverage).
+    expect(botLimitShortfalls(p, needs).map((s) => s.field)).toEqual(["allowedActionTypes", "allowedOrigins", "botEntriesWithoutStopLoss"]);
     const next = policyForBots(p, needs);
     expect(next.allowedOrigins).toEqual(["guardian", "bot"]);
     expect(next.requireStopLossForNewEntries).toBe(true);
@@ -145,7 +146,8 @@ describe("bot grants", () => {
 
   it("needs no exemption when the user does not require stops", () => {
     const p = automation({ requireStopLossForNewEntries: false, allowedOrigins: ["guardian", "bot"] });
-    expect(botLimitShortfalls(p, needs)).toEqual([]);
+    expect(botLimitShortfalls(p, needs).map((s) => s.field)).toEqual(["allowedActionTypes"]);
+    expect(botLimitShortfalls(policyForBots(p, needs), needs)).toEqual([]);
   });
 });
 
