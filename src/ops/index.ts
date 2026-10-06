@@ -11,7 +11,7 @@
  *   variable parts (numbers, ids, hex) taken out; repeats are counted and reported after a cooldown by severity
  *   ({@link OPS_COOLDOWN_MS}), never one message each.
  * - **Untrusted text can't ping or link.** Messages carry text from errors and from browsers' reports: it goes into
- *   code blocks with backticks neutralised, and `allowed_mentions` is empty except for the one configured mention on
+ *   code blocks with backticks neutralised, and `allowed_mentions` is empty except for the configured mentions on
  *   critical alerts and critical health problems.
  * - **Within Discord's limits.** Title 256, description 4096, field 1024, footer 2048, 6000 characters and 10 embeds per
  *   message, 2000 for `content`; batches are split to fit. 429 answers carry the wait ({@link postOpsWebhook}).
@@ -324,15 +324,37 @@ export function opsWebhookKind(url: string): { kind: OpsWebhookKind } | { proble
   return { kind: "slack" };
 }
 
-/** A Discord mention for critical alerts: a user `<@123…>` or a role `<@&123…>` (never @everyone or @here). */
-export function parseDiscordMention(value: string | undefined): { user: string } | { role: string } | null {
-  const v = value?.trim();
-  if (!v) return null;
-  const user = /^<@!?(\d{15,21})>$/.exec(v);
-  if (user) return { user: user[1]! };
-  const role = /^<@&(\d{15,21})>$/.exec(v);
-  if (role) return { role: role[1]! };
-  return null;
+/** Who critical alerts ping on Discord: users and roles by id (never @everyone or @here). */
+export interface DiscordMention {
+  users: string[];
+  roles: string[];
+}
+
+/** At most this many mentions in OPS_ALERT_DISCORD_MENTION. */
+export const MAX_DISCORD_MENTIONS = 10;
+
+/**
+ * OPS_ALERT_DISCORD_MENTION: one or more users `<@123…>` and roles `<@&123…>`, separated by spaces or commas, for
+ * example `<@111…> <@222…>`. Anything else (and more than {@link MAX_DISCORD_MENTIONS}) is refused as a whole.
+ */
+export function parseDiscordMention(value: string | undefined): DiscordMention | null {
+  const parts = (value ?? "").split(/[\s,]+/).filter((p) => p !== "");
+  if (parts.length === 0 || parts.length > MAX_DISCORD_MENTIONS) return null;
+  const users = new Set<string>();
+  const roles = new Set<string>();
+  for (const p of parts) {
+    const user = /^<@!?(\d{15,21})>$/.exec(p);
+    const role = /^<@&(\d{15,21})>$/.exec(p);
+    if (user) users.add(user[1]!);
+    else if (role) roles.add(role[1]!);
+    else return null;
+  }
+  return { users: [...users], roles: [...roles] };
+}
+
+/** The message text that pings {@link DiscordMention}'s users and roles. */
+export function discordMentionText(m: DiscordMention): string {
+  return [...m.users.map((u) => `<@${u}>`), ...m.roles.map((r) => `<@&${r}>`)].join(" ");
 }
 
 const EMOJI: Readonly<Record<OpsSeverity, string>> = { critical: "🔴", error: "🟠", warning: "🟡" };
@@ -438,7 +460,7 @@ interface OpsMessage<P> {
 const pings = (x: { alert?: OpsAlert; problem?: OpsProblemNotice }) =>
   x.alert ? x.alert.severity === "critical" : x.problem?.kind === "problem" && x.problem.critical === true;
 
-function discordMessages(batch: OpsBatch, o: { label: string; mention?: { user: string } | { role: string } | null }): Array<OpsMessage<DiscordPayload>> {
+function discordMessages(batch: OpsBatch, o: { label: string; mention?: DiscordMention | null }): Array<OpsMessage<DiscordPayload>> {
   type Item = { embed: DiscordEmbed; alert?: number; problem?: number; note?: true; ping: boolean };
   const items: Item[] = [
     ...(batch.problems ?? []).map((p, i): Item => ({ embed: problemEmbed(p, o.label), problem: i, ping: pings({ problem: p }) })),
@@ -458,10 +480,14 @@ function discordMessages(batch: OpsBatch, o: { label: string; mention?: { user: 
     if (mention) mentioned = true;
     out.push({
       payload: {
-        ...(mention ? { content: "user" in mention ? `<@${mention.user}>` : `<@&${mention.role}>` } : {}),
+        ...(mention ? { content: discordMentionText(mention) } : {}),
         username: "Kokoah alerts",
         embeds: cur.map((i) => i.embed),
-        allowed_mentions: { parse: [], ...(mention ? ("user" in mention ? { users: [mention.user] } : { roles: [mention.role] }) : {}) },
+        allowed_mentions: {
+          parse: [],
+          ...(mention && mention.users.length > 0 ? { users: mention.users } : {}),
+          ...(mention && mention.roles.length > 0 ? { roles: mention.roles } : {}),
+        },
       },
       alerts: cur.flatMap((i) => (i.alert === undefined ? [] : [i.alert])),
       problems: cur.flatMap((i) => (i.problem === undefined ? [] : [i.problem])),
@@ -485,7 +511,7 @@ function discordMessages(batch: OpsBatch, o: { label: string; mention?: { user: 
  * 6000 characters. The first message holding a critical alert or a critical problem adds the configured mention in
  * `content` (and only that one may ping).
  */
-export function discordPayloads(batch: OpsBatch, o: { label: string; mention?: { user: string } | { role: string } | null }): DiscordPayload[] {
+export function discordPayloads(batch: OpsBatch, o: { label: string; mention?: DiscordMention | null }): DiscordPayload[] {
   return discordMessages(batch, o).map((m) => m.payload);
 }
 
@@ -613,7 +639,7 @@ export type OpsBatchResult = OpsPostResult & { sent: OpsBatchSent };
 export async function sendOpsBatch(
   url: string,
   batch: OpsBatch,
-  o: { label: string; mention?: { user: string } | { role: string } | null; fetchFn?: typeof fetch },
+  o: { label: string; mention?: DiscordMention | null; fetchFn?: typeof fetch },
 ): Promise<OpsBatchResult> {
   const sent: OpsBatchSent = { messages: 0, alerts: [], problems: [], note: false };
   const kind = opsWebhookKind(url);

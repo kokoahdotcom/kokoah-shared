@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   OpsAggregator,
   cleanOpsEvent,
+  discordMentionText,
   discordPayloads,
   opsFingerprint,
   opsWebhookKind,
@@ -152,10 +153,21 @@ describe("webhooks", () => {
   });
 
   it("parses a user or role mention, never everyone", () => {
-    expect(parseDiscordMention("<@123456789012345678>")).toEqual({ user: "123456789012345678" });
-    expect(parseDiscordMention("<@!123456789012345678>")).toEqual({ user: "123456789012345678" });
-    expect(parseDiscordMention("<@&123456789012345678>")).toEqual({ role: "123456789012345678" });
-    for (const v of ["@everyone", "@here", "123", "<@12>", "", undefined]) expect(parseDiscordMention(v)).toBeNull();
+    expect(parseDiscordMention("<@123456789012345678>")).toEqual({ users: ["123456789012345678"], roles: [] });
+    expect(parseDiscordMention("<@!123456789012345678>")).toEqual({ users: ["123456789012345678"], roles: [] });
+    expect(parseDiscordMention("<@&123456789012345678>")).toEqual({ users: [], roles: ["123456789012345678"] });
+    // Several, by spaces or commas; repeats count once.
+    expect(parseDiscordMention(" <@111111111111111111> <@222222222222222222>,<@&333333333333333333>, <@111111111111111111> ")).toEqual({
+      users: ["111111111111111111", "222222222222222222"],
+      roles: ["333333333333333333"],
+    });
+    for (const v of ["@everyone", "@here", "123", "<@12>", "", "  ", undefined, "<@111111111111111111> @everyone", "<@111111111111111111> 222222222222222222"]) {
+      expect(parseDiscordMention(v)).toBeNull();
+    }
+    expect(parseDiscordMention(Array.from({ length: 11 }, (_, i) => `<@${100000000000000000 + i}>`).join(" "))).toBeNull();
+    expect(discordMentionText({ users: ["111111111111111111", "222222222222222222"], roles: ["333333333333333333"] })).toBe(
+      "<@111111111111111111> <@222222222222222222> <@&333333333333333333>",
+    );
   });
 
   const alert = (i: number, over: Partial<OpsAlert> = {}): OpsAlert => ({
@@ -182,7 +194,7 @@ describe("webhooks", () => {
     const many = Array.from({ length: 23 }, (_, i) => alert(i + 1, { detail: "z".repeat(1500) }));
     const out = discordPayloads({ alerts: [evil, ...many], problems: [{ kind: "problem", subject: "engine", detail: "no heartbeat for 6 min", since: 1_700_000_000_000 }] }, {
       label: "app.example.com (testnet)",
-      mention: { role: "123456789012345678" },
+      mention: { users: [], roles: ["123456789012345678"] },
     });
     expect(out.length).toBeGreaterThan(3);
     for (const [i, p] of out.entries()) {
@@ -198,6 +210,10 @@ describe("webhooks", () => {
       expect(p.allowed_mentions).toEqual(i === 0 ? { parse: [], roles: ["123456789012345678"] } : { parse: [] });
       expect(p.content).toBe(i === 0 ? "<@&123456789012345678>" : undefined);
     }
+    // Several people: each is named and allowed, nobody else.
+    const two = discordPayloads({ alerts: [evil] }, { label: "x", mention: { users: ["111111111111111111", "222222222222222222"], roles: [] } });
+    expect(two[0]!.content).toBe("<@111111111111111111> <@222222222222222222>");
+    expect(two[0]!.allowed_mentions).toEqual({ parse: [], users: ["111111111111111111", "222222222222222222"] });
     const first = out[0]!.embeds[1]!;
     expect(first.title).toBe("🔴 CRITICAL · ＠everyone ［click］(https://evil.example) ‹＠123›");
     expect(first.description!.startsWith("```\nˋˋˋ @everyone")).toBe(true);
@@ -278,13 +294,13 @@ describe("webhooks", () => {
     };
     const alerts = [alert(0, { severity: "critical" }), ...Array.from({ length: 14 }, (_, i) => alert(i + 1))];
     const problems = [{ kind: "problem" as const, subject: "engine", detail: "no heartbeat for 6 min", critical: true }];
-    const r = await sendOpsBatch(DISCORD, { alerts, problems, note: "3 more kinds of events" }, { label: "x", mention: { user: "123456789012345678" }, fetchFn: fetchFn as typeof fetch });
+    const r = await sendOpsBatch(DISCORD, { alerts, problems, note: "3 more kinds of events" }, { label: "x", mention: { users: ["123456789012345678"], roles: [] }, fetchFn: fetchFn as typeof fetch });
     expect(r).toEqual({ ok: false, retryAfterMs: 3000, sent: { messages: 1, alerts: [0, 1, 2, 3, 4, 5, 6, 7, 8], problems: [0], note: false } });
     expect(bodies[0]!.content).toBe("<@123456789012345678>");
     expect(bodies[1]!.content).toBeUndefined();
     // What is left is posted next time, without the mention (its critical items went out).
     const left = { alerts: alerts.filter((_, i) => !r.sent.alerts.includes(i)), note: "3 more kinds of events" };
-    const again = await sendOpsBatch(DISCORD, left, { label: "x", mention: { user: "123456789012345678" }, fetchFn: (async () => new Response(null, { status: 204 })) as typeof fetch });
+    const again = await sendOpsBatch(DISCORD, left, { label: "x", mention: { users: ["123456789012345678"], roles: [] }, fetchFn: (async () => new Response(null, { status: 204 })) as typeof fetch });
     expect(again).toEqual({ ok: true, sent: { messages: 1, alerts: [0, 1, 2, 3, 4, 5], problems: [], note: true } });
   });
 
@@ -296,7 +312,7 @@ describe("webhooks", () => {
   });
 
   it("mentions on a critical problem, never on a warning problem or an all-clear", () => {
-    const mention = { role: "123456789012345678" };
+    const mention = { users: [], roles: ["123456789012345678"] };
     const [warn] = discordPayloads({ problems: [{ kind: "problem", subject: "notifications", detail: "12 waiting" }] }, { label: "x", mention });
     expect(warn!.content).toBeUndefined();
     expect(warn!.embeds[0]!.title).toBe("⚠️ Problem · notifications");
