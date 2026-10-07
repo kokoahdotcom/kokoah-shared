@@ -1,6 +1,6 @@
 # @kokoah/shared
 
-Shared TypeScript library for **Kokoah**, a non-custodial trading app for Hyperliquid (HL) perpetual futures.
+Shared TypeScript library for **Kokoah**, a non-custodial trading app for Hyperliquid (HL) perpetual futures and spot.
 The frontend, the signer frame, the backend and the signer service all import it, so they compute **identical numbers**
 and produce **identical signed actions**.
 
