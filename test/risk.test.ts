@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeBuilderFeePromo,
   assessOrderRisk,
+  builderFeeAt,
   builderFeeRate,
+  builderFeeScheduleProblem,
   estimateFees,
   estimateMarketImpact,
   fundingCost,
@@ -182,6 +185,21 @@ describe("PnL, ROE, fees, funding, stops", () => {
     [1250, "1.25%"],
   ])("tenthsBpsToPercentString(%i) = %s", (f, s) => {
     expect(tenthsBpsToPercentString(f)).toBe(s);
+  });
+
+  it("charges a promotion's builder fee until it ends, then the standard fee", () => {
+    const until = Date.UTC(2026, 11, 1);
+    const schedule = { feeTenthsBps: 25, promo: { feeTenthsBps: 0, until } };
+    expect(builderFeeAt(schedule, until - 1)).toBe(0);
+    expect(activeBuilderFeePromo(schedule, until - 1)).toEqual({ feeTenthsBps: 0, until });
+    expect(builderFeeAt(schedule, until)).toBe(25);
+    expect(activeBuilderFeePromo(schedule, until)).toBeNull();
+    expect(builderFeeAt({ feeTenthsBps: 25 }, until - 1)).toBe(25);
+    expect(builderFeeAt({ feeTenthsBps: 25, promo: null })).toBe(25);
+    expect(builderFeeScheduleProblem(schedule)).toBeNull();
+    expect(builderFeeScheduleProblem({ feeTenthsBps: 25, promo: { feeTenthsBps: 30, until } })).toMatch(/must not exceed/);
+    expect(builderFeeScheduleProblem({ feeTenthsBps: 101 })).toMatch(/0 to 100/);
+    expect(builderFeeScheduleProblem({ feeTenthsBps: 25, promo: { feeTenthsBps: 0, until: Number.NaN } })).toMatch(/time/);
   });
 
   it("funding: positive rate means longs pay", () => {

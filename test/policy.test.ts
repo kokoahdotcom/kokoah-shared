@@ -276,6 +276,17 @@ describe("compiled and wire actions", () => {
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: none }, ctx()))).toEqual(["BUILDER_REQUIRED"]);
     const wrong = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: 100 } });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: wrong }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
+    const other = compileAction(entry(), { registry, builder: { ...builder, address: "0x2222222222222222222222222222222222222222" } });
+    expect(codes(evaluatePolicy({ kind: "compiled", compiled: other }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
+  });
+
+  it("accepts a lower builder fee (a promotion) but never a higher one", () => {
+    for (const f of [0, 10, BUILDER.f]) {
+      const c = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: f } });
+      expect(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()).allowed).toBe(true);
+    }
+    const above = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: BUILDER.f + 1 } });
+    expect(codes(evaluatePolicy({ kind: "compiled", compiled: above }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
   });
 
   it("evaluates compiled market orders at their IOC price", () => {
