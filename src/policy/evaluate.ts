@@ -385,14 +385,14 @@ function checkOrderLegs(
   }
   if (legs.some((l) => l.spot)) checkSpotLegs(legs, actionType, wire, policy, add);
   // Builder (order actions; modify actions carry no builder field). Spot buys carry none: Hyperliquid charges builder
-  // fees on spot sells only.
+  // fees on spot sells only. The policy's fee is the most an order may pay: a promotion (BuilderFeeSchedule) charges less.
   if (policy.requiredBuilder && wire?.type === "order") {
     const b = wire.builder as { b?: string; f?: number } | undefined;
     if (legs.length > 0 && legs.every((l) => l.spot && l.isBuy)) {
       if (b !== undefined) add("BUILDER_MISMATCH", "Spot buys carry no builder fee (Hyperliquid charges it on spot sells only).");
     } else if (!b) add("BUILDER_REQUIRED", "Orders must carry the Kokoah builder code.");
-    else if (b.b?.toLowerCase() !== policy.requiredBuilder.b || b.f !== policy.requiredBuilder.f) {
-      add("BUILDER_MISMATCH", `Builder must be ${policy.requiredBuilder.b} with f=${policy.requiredBuilder.f}.`);
+    else if (b.b?.toLowerCase() !== policy.requiredBuilder.b || !(Number.isInteger(b.f) && b.f! >= 0 && b.f! <= policy.requiredBuilder.f)) {
+      add("BUILDER_MISMATCH", `Builder must be ${policy.requiredBuilder.b} with f at most ${policy.requiredBuilder.f}.`);
     }
   }
 }

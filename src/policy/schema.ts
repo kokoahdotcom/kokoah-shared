@@ -53,7 +53,10 @@ export const PolicySchema = v.strictObject({
   priceBandPct: v.pipe(v.number(), v.minValue(0), v.maxValue(100)),
   /** Vault/sub-account addresses the key may act for. Empty: master account only. */
   allowedVaultAddresses: v.array(AddressSchema),
-  /** Every order action must carry exactly this builder `{b, f}`. Null: no builder requirement. */
+  /**
+   * Every order action must carry this builder `b` with a fee of at most `f` (the standard fee; a promotion charges
+   * less). Null: no builder requirement.
+   */
   requiredBuilder: v.nullable(
     v.strictObject({
       b: AddressSchema,

@@ -146,6 +146,46 @@ export function builderFeeRate(feeTenthsBps: number): number {
   return feeTenthsBps / 100_000;
 }
 
+/** A lower builder fee charged until a moment (a launch promotion), then the standard fee again. */
+export interface BuilderFeePromo {
+  /** The fee during the promotion, in tenths of a bp; at most the standard fee. */
+  feeTenthsBps: number;
+  /** When the promotion ends (ms since the epoch): from then on orders pay the standard fee. */
+  until: number;
+}
+
+/**
+ * Kokoah's builder fee over time. `feeTenthsBps` is the standard fee: signed policies carry it as the most an order
+ * may pay (`requiredBuilder.f`), and users' approvals must cover it. A promotion only ever lowers the fee.
+ */
+export interface BuilderFeeSchedule {
+  feeTenthsBps: number;
+  promo?: BuilderFeePromo | null;
+}
+
+/** The promotion still running at `now`, or null. */
+export function activeBuilderFeePromo(schedule: BuilderFeeSchedule, now: number = Date.now()): BuilderFeePromo | null {
+  const p = schedule.promo;
+  return p && now < p.until && p.feeTenthsBps < schedule.feeTenthsBps ? p : null;
+}
+
+/** The builder fee an order placed at `now` carries (tenths of a bp): the promotion's while it runs, else the standard. */
+export function builderFeeAt(schedule: BuilderFeeSchedule, now: number = Date.now()): number {
+  return activeBuilderFeePromo(schedule, now)?.feeTenthsBps ?? schedule.feeTenthsBps;
+}
+
+/** Why a schedule is invalid (fees outside 0–100 or not integers, a promotion above the standard fee), or null. */
+export function builderFeeScheduleProblem(schedule: BuilderFeeSchedule): string | null {
+  const ok = (f: number) => Number.isInteger(f) && f >= 0 && f <= MAX_PERP_BUILDER_FEE_TENTHS_BPS;
+  if (!ok(schedule.feeTenthsBps)) return `the builder fee must be an integer from 0 to ${MAX_PERP_BUILDER_FEE_TENTHS_BPS}`;
+  const p = schedule.promo;
+  if (!p) return null;
+  if (!ok(p.feeTenthsBps)) return `the promotional builder fee must be an integer from 0 to ${MAX_PERP_BUILDER_FEE_TENTHS_BPS}`;
+  if (p.feeTenthsBps > schedule.feeTenthsBps) return "the promotional builder fee must not exceed the standard fee";
+  if (!Number.isSafeInteger(p.until) || p.until <= 0) return "the promotion's end must be a time";
+  return null;
+}
+
 /**
  * Formats a builder fee in tenths of a bp as the percent string HL's `approveBuilderFee.maxFeeRate` expects,
  * without trailing zeros: 25 → "0.025%", 100 → "0.1%", 10 → "0.01%".
