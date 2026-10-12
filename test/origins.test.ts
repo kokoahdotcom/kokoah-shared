@@ -54,9 +54,9 @@ const needs: BotLimitNeeds = {
 };
 
 describe("origins", () => {
-  it("adds bot and telegram after the existing origins, with their own cloid codes", () => {
-    expect(INTENT_ORIGINS).toEqual(["manual", "guardian", "ai_ticket", "bot", "telegram"]);
-    expect(CLOID_ORIGIN_CODES).toEqual({ manual: "01", guardian: "02", ai_ticket: "03", bot: "04", telegram: "05" });
+  it("adds bot, telegram and agent after the existing origins, with their own cloid codes", () => {
+    expect(INTENT_ORIGINS).toEqual(["manual", "guardian", "ai_ticket", "bot", "telegram", "agent"]);
+    expect(CLOID_ORIGIN_CODES).toEqual({ manual: "01", guardian: "02", ai_ticket: "03", bot: "04", telegram: "05", agent: "06" });
     for (const origin of INTENT_ORIGINS) {
       const c = generateCloid(origin);
       expect(c.slice(2, 10)).toBe(`6b6f${CLOID_ORIGIN_CODES[origin]}01`);

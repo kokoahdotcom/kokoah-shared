@@ -4,8 +4,8 @@
  *
  * Kokoah layout (bytes): `[0x6b 0x6f][origin][version][12 random or derived bytes]`
  * - `0x6b6f` is ASCII "ko" and marks Kokoah-generated orders (useful for attribution and reconciliation);
- * - origin: 0x01 manual, 0x02 guardian, 0x03 ai_ticket, 0x04 bot, 0x05 telegram (codes are never reused, so cloids
- *   made before an origin was added keep parsing the same way);
+ * - origin: 0x01 manual, 0x02 guardian, 0x03 ai_ticket, 0x04 bot, 0x05 telegram, 0x06 agent (codes are never reused, so
+ *   cloids made before an origin was added keep parsing the same way);
  * - version: 0x01.
  * A custom 4-byte tag can replace the first four bytes (e.g. for creator attribution).
  *
@@ -32,6 +32,7 @@ export const CLOID_ORIGIN_CODES: Readonly<Record<IntentOrigin, string>> = Object
   ai_ticket: "03",
   bot: "04",
   telegram: "05",
+  agent: "06",
 });
 
 const CLOID_RE = /^0x[0-9a-f]{32}$/;
