@@ -27,6 +27,11 @@
       "import": "./dist/markets/index.js",
       "default": "./dist/markets/index.js"
     },
+    "./journal": {
+      "types": "./dist/journal/index.d.ts",
+      "import": "./dist/journal/index.js",
+      "default": "./dist/journal/index.js"
+    },
     "./precision": {
       "types": "./dist/precision/index.d.ts",
       "import": "./dist/precision/index.js",
