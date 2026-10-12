@@ -13,6 +13,11 @@
  * marker and origin and names the parent algo and the slice (see {@link algoCloid}):
  * `[0x6b 0x6f][origin][0x02][kind][parent: 6 bytes][slice: 2 bytes][attempt: 1 byte][check: 2 bytes]`.
  *
+ * Agent orders (Kokoah Agents, policy format 3) use layout version 0x03, which carries the first 8 bytes of the
+ * mandate's `agentId` so a fill attributes to its agent from the cloid alone (see {@link agentCloid}):
+ * `[0x6b 0x6f][0x06 agent][0x03][agentId prefix: 8 bytes][4 random or derived bytes]`. Like version 0x01 it trusts the
+ * marker and version (no check byte); a stray match just fails to find a mandate and stays unattributed.
+ *
  * @module
  */
 import { keccak256, stringToBytes } from "viem";
@@ -89,6 +94,8 @@ export interface CloidInfo {
   tag: string;
   /** Present on algo child orders (layout version 0x02 with a valid check). */
   algo?: AlgoCloidInfo;
+  /** The mandate's `agentId` prefix (first 8 bytes, 16 hex), on agent orders (layout version 0x03). */
+  agentIdPrefix?: string;
 }
 
 /** Reads the Kokoah tag from a cloid. Returns null for malformed input. */
@@ -98,12 +105,14 @@ export function parseCloid(cloid: string): CloidInfo | null {
   const tag = c.slice(2, 10);
   const version = tag.slice(6, 8);
   const algo = version === KOKOAH_ALGO_CLOID_VERSION ? decodeAlgo(c) : undefined;
-  const kokoah = tag.startsWith(KOKOAH_CLOID_MARKER) && (version === KOKOAH_CLOID_VERSION || algo !== undefined);
+  const agentIdPrefix = version === KOKOAH_AGENT_CLOID_VERSION && tag.startsWith(KOKOAH_CLOID_MARKER) ? c.slice(10, 26) : undefined;
+  const kokoah = tag.startsWith(KOKOAH_CLOID_MARKER) && (version === KOKOAH_CLOID_VERSION || algo !== undefined || agentIdPrefix !== undefined);
   if (!kokoah) return { kokoah: false, tag };
   const code = tag.slice(4, 6);
   const origin = (Object.keys(CLOID_ORIGIN_CODES) as IntentOrigin[]).find((o) => CLOID_ORIGIN_CODES[o] === code);
   const info: CloidInfo = origin ? { kokoah: true, origin, tag } : { kokoah: true, tag };
   if (algo) info.algo = algo;
+  if (agentIdPrefix) info.agentIdPrefix = agentIdPrefix;
   return info;
 }
 
@@ -183,4 +192,29 @@ function decodeAlgo(c: string): AlgoCloidInfo | undefined {
 export function isAlgoChild(cloid: string | null | undefined, parent: string, kind?: AlgoKind): boolean {
   const algo = cloid ? parseCloid(cloid)?.algo : undefined;
   return !!algo && algo.parentTag === algoParentTag(parent) && (kind === undefined || algo.kind === kind);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Agent orders (Kokoah Agents, policy format 3)
+// ---------------------------------------------------------------------------------------------
+
+/** Layout version byte of agent order cloids. */
+export const KOKOAH_AGENT_CLOID_VERSION = "03";
+
+/**
+ * Cloid for an agent order: the Kokoah marker, the `agent` origin, version 0x03, the first 8 bytes of the mandate's
+ * `agentId`, then 4 bytes derived from `seed` (same seed → same cloid, so retries are idempotent) or random when no
+ * seed is given. {@link parseCloid} reads the `agentId` prefix back, so a fill attributes to its mandate from the cloid
+ * alone, even when the decision record is gone.
+ */
+export function agentCloid(agentId: string, seed?: string): Cloid {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(agentId)) throw new RangeError("agentId must be 0x followed by 64 hex characters (32 bytes)");
+  const prefix = agentId.slice(2, 18).toLowerCase();
+  const tail = seed === undefined ? randomHex(4) : keccak256(stringToBytes(seed)).slice(2, 10);
+  return `0x${KOKOAH_CLOID_MARKER}${CLOID_ORIGIN_CODES.agent}${KOKOAH_AGENT_CLOID_VERSION}${prefix}${tail}`;
+}
+
+/** The mandate's `agentId` prefix (8 bytes, 16 hex) a cloid carries, or null when it is not an agent-order cloid. */
+export function agentIdPrefixOf(cloid: string | null | undefined): string | null {
+  return (cloid ? parseCloid(cloid)?.agentIdPrefix : undefined) ?? null;
 }

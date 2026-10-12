@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentCloid,
+  agentIdPrefixOf,
   CLOID_ORIGIN_CODES,
   CompileError,
   compileAction,
   deriveCloid,
   generateCloid,
   isCloid,
+  KOKOAH_AGENT_CLOID_VERSION,
   marketOrderLimitPrice,
   marketTriggerLimitPrice,
   parseCloid,
@@ -179,5 +182,43 @@ describe("compileAction", () => {
   it("spot markets allow a 1000 builder fee and use the 8-decimal rule", () => {
     const c = compileAction({ kind: "order", coin: "@107", side: "sell", orderType: "limit", size: "1.5", price: "45.123", origin: "manual" }, { registry, builder: { ...BUILDER, feeTenthsBps: 1000 } });
     expect(c.action).toMatchObject({ orders: [{ a: 10107 }], builder: { f: 1000 } });
+  });
+});
+
+describe("agent order cloids (layout version 0x03)", () => {
+  const agentId = `0x${"ab".repeat(8)}${"cd".repeat(24)}` as const; // first 8 bytes ab.., rest cd..
+
+  it("carries the agentId prefix and reads it back", () => {
+    const c = agentCloid(agentId, "agent:mandate1:decision1");
+    expect(isCloid(c)).toBe(true);
+    expect(c.slice(2, 10)).toBe(`6b6f${CLOID_ORIGIN_CODES.agent}${KOKOAH_AGENT_CLOID_VERSION}`); // 6b6f0603
+    const info = parseCloid(c)!;
+    expect(info.kokoah).toBe(true);
+    expect(info.origin).toBe("agent");
+    expect(info.agentIdPrefix).toBe("ab".repeat(8)); // first 8 bytes of agentId
+    expect(agentIdPrefixOf(c)).toBe("ab".repeat(8));
+  });
+
+  it("is deterministic from a seed and unique across seeds", () => {
+    expect(agentCloid(agentId, "s1")).toBe(agentCloid(agentId, "s1"));
+    expect(agentCloid(agentId, "s1")).not.toBe(agentCloid(agentId, "s2"));
+    // No seed → random tail, so two differ, but the prefix is the same.
+    const a = agentCloid(agentId);
+    const b = agentCloid(agentId);
+    expect(a).not.toBe(b);
+    expect(parseCloid(a)!.agentIdPrefix).toBe(parseCloid(b)!.agentIdPrefix);
+  });
+
+  it("refuses a malformed agentId", () => {
+    expect(() => agentCloid("0x12", "s")).toThrow(/agentId must be/);
+    expect(() => agentCloid(`0x${"ab".repeat(20)}`, "s")).toThrow(/agentId must be/);
+  });
+
+  it("gives no agentId prefix for non-agent cloids", () => {
+    expect(agentIdPrefixOf(generateCloid("manual"))).toBeNull();
+    expect(agentIdPrefixOf(deriveCloid("x", "bot"))).toBeNull();
+    expect(agentIdPrefixOf(generateCloid("agent"))).toBeNull(); // a version-01 agent cloid carries no prefix
+    expect(agentIdPrefixOf("0x" + "ab".repeat(16))).toBeNull();
+    expect(agentIdPrefixOf(null)).toBeNull();
   });
 });
