@@ -25,6 +25,7 @@ export const ORIGIN_LABELS: Readonly<Record<IntentOrigin, string>> = Object.free
   ai_ticket: "AI-drafted orders you confirm",
   bot: "bots",
   telegram: "Telegram trades you confirm",
+  agent: "agents you connected",
 });
 
 /** True when the policy lets `origin` act (a policy without `allowedOrigins` allows every origin). */

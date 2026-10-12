@@ -21,10 +21,12 @@ import { isDecimal, normalizeDecimal } from "../precision/index.js";
  * - `guardian`: a guardian rule on the server (automation key);
  * - `ai_ticket`: an AI-drafted order the user confirmed;
  * - `bot`: a grid, DCA, copy or signal bot on the server (automation key);
- * - `telegram`: an order the user confirmed in Telegram (automation key).
+ * - `telegram`: an order the user confirmed in Telegram (automation key);
+ * - `agent`: a trading agent the user connected under a signed per-agent mandate (policy format 3). The automation key
+ *   signs its orders in the `each`/`envelope` modes; `each_in_app` orders are signed by the browser key.
  * New origins are appended, never reordered, so stored values and cloid tags keep their meaning.
  */
-export const INTENT_ORIGINS = ["manual", "guardian", "ai_ticket", "bot", "telegram"] as const;
+export const INTENT_ORIGINS = ["manual", "guardian", "ai_ticket", "bot", "telegram", "agent"] as const;
 export type IntentOrigin = (typeof INTENT_ORIGINS)[number];
 
 /** Order types supported by the ticket (FRONTEND_SPEC §9.1). */
