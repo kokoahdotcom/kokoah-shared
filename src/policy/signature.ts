@@ -366,11 +366,16 @@ export class AgentPolicyValidationError extends Error {
   }
 }
 
-/** 1 to 40 characters with no control (C0/C1) or invisible (zero-width, BOM, line/para separator) code points. */
+/**
+ * Characters that change how a name looks without being seen — the same set the wallet hides (control, format
+ * incl. direction marks and overrides, private-use, unassigned, line/paragraph separators, default-ignorable and the
+ * blank Braille cell), minus the variation selectors emoji use. Kept in step with the extension's src/decode/view.ts.
+ */
+const HIDDEN_NAME_CHAR = /(?![\uFE00-\uFE0F])[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u2800]/u;
+
+/** 1 to 40 characters, none of them hidden ({@link HIDDEN_NAME_CHAR}), so the name shown is all there is. */
 function isAgentNameValid(name: string): boolean {
-  if (typeof name !== "string" || name.length < 1 || name.length > 40) return false;
-  // C0/C1 control, zero-width and other invisible code points (BOM, line/para separators): rejected in a shown name.
-  return !/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\ufeff]/.test(name);
+  return typeof name === "string" && name.length >= 1 && name.length <= 40 && !HIDDEN_NAME_CHAR.test(name);
 }
 
 /** "unlimited", or a decimal that is positive (or non-negative when `allowZero`, for `askAboveUsd`'s "0"). */
@@ -395,9 +400,10 @@ export function agentPolicyProblems(policyInput: PolicyInput | Policy, mandate: 
   if (p.allowedVaultAddresses.length !== 0) out.push("an agent policy lists no sub-accounts (isolation is agentAccount)");
   if (p.maxDailyLossUsd === undefined) out.push("maxDailyLossUsd is required for an agent policy");
   if (!p.requireStopLossForNewEntries) out.push("requireStopLossForNewEntries must be true for an agent policy");
+  if (p.botEntriesWithoutStopLoss === true) out.push("an agent policy can't exempt entries from the stop-loss (botEntriesWithoutStopLoss)");
   if (p.referralCode !== undefined) out.push("an agent policy carries no referralCode");
   if (!/^0x[0-9a-fA-F]{64}$/.test(mandate.agentId) || /^0x0+$/.test(mandate.agentId)) out.push("agentId must be a non-zero 32-byte hex value");
-  if (!/^0x[0-9a-fA-F]{40}$/.test(mandate.agentAccount)) out.push("agentAccount must be a 20-byte hex address");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(mandate.agentAccount) || /^0x0+$/.test(mandate.agentAccount)) out.push("agentAccount must be a non-zero 20-byte hex address");
   if (!isAgentNameValid(mandate.agentName)) out.push("agentName must be 1 to 40 characters with no control or invisible characters");
   if (!isUsdLimit(mandate.askAboveUsd, true)) out.push('askAboveUsd must be "0", "unlimited" or a positive amount');
   if (!isUsdLimit(mandate.maxOpenNotionalUsd, false)) out.push('maxOpenNotionalUsd must be "unlimited" or a positive amount');
