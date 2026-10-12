@@ -12,7 +12,7 @@
  * @module
  */
 import { keccak256, recoverTypedDataAddress, stringToBytes } from "viem";
-import { normalizeDecimal } from "../precision/index.js";
+import { isDecimal, normalizeDecimal } from "../precision/index.js";
 import { type Policy, type PolicyInput, parsePolicy } from "./schema.js";
 
 /** Canonical JSON of a policy (sorted keys, sorted and de-duplicated lists) — the preimage of {@link hashPolicy}. */
@@ -103,11 +103,94 @@ export const POLICY_EIP712_TYPES_V2 = {
   ],
 } as const;
 
-/** Typed-data format of a policy signature: 1 (the original) or 2 (every policy field readable). */
-export type PolicyTypedDataVersion = 1 | 2;
+/**
+ * EIP-712 types of a policy authorization in format 3 (domain version "3"): format 2's first 24 fields unchanged, then
+ * the per-agent mandate an external trading agent trades under (Kokoah Agents), then format 2's
+ * `policyHash`/`issuedAt`/`expiresAt`/`nonce` trailer. Every agent field is readable, so the signature binds it
+ * directly and `policyHash` still commits only to the base policy. Used only for agent mandates
+ * ({@link prepareAgentPolicySignature}); normal user policies stay on format 2.
+ */
+export const POLICY_EIP712_TYPES_V3 = {
+  KokoahPolicy: [
+    { name: "user", type: "address" },
+    { name: "agent", type: "address" },
+    { name: "network", type: "string" },
+    { name: "allowedActions", type: "string" },
+    { name: "allowedMarkets", type: "string" },
+    { name: "allowedOrigins", type: "string" },
+    { name: "allowedSubAccounts", type: "string" },
+    { name: "maxOrderNotionalUsd", type: "string" },
+    { name: "maxDailyNotionalUsd", type: "string" },
+    { name: "reduceOnlyExemptFromCaps", type: "bool" },
+    { name: "maxDailyLossUsd", type: "string" },
+    { name: "maxLeverage", type: "uint32" },
+    { name: "stopLossRequired", type: "bool" },
+    { name: "maxStopLossDistancePct", type: "string" },
+    { name: "botsWithoutStopLoss", type: "bool" },
+    { name: "maxOrdersPerMinute", type: "uint32" },
+    { name: "priceBandPct", type: "string" },
+    { name: "maxActionLifetimeMs", type: "string" },
+    { name: "allowedSpotPairs", type: "string" },
+    { name: "spotTrading", type: "bool" },
+    { name: "referralCode", type: "string" },
+    { name: "builder", type: "address" },
+    { name: "builderFeeTenthsBps", type: "uint32" },
+    { name: "canWithdrawOrTransfer", type: "bool" },
+    { name: "agentId", type: "bytes32" },
+    { name: "agentName", type: "string" },
+    { name: "agentAccount", type: "address" },
+    { name: "askAboveUsd", type: "string" },
+    { name: "maxOpenNotionalUsd", type: "string" },
+    { name: "maxConcurrentPositions", type: "uint32" },
+    { name: "maxEntriesPerDay", type: "uint32" },
+    { name: "cooldownLosses", type: "uint32" },
+    { name: "cooldownMinutes", type: "uint32" },
+    { name: "tradingWindows", type: "string" },
+    { name: "reduceOnlyAfter", type: "string" },
+    { name: "policyHash", type: "bytes32" },
+    { name: "issuedAt", type: "uint64" },
+    { name: "expiresAt", type: "uint64" },
+    { name: "nonce", type: "uint64" },
+  ],
+} as const;
 
-/** The typed-data format new policy signatures use ({@link preparePolicySignature}). */
+/** Typed-data format of a policy signature: 1 (the original), 2 (every policy field readable) or 3 (agent mandate). */
+export type PolicyTypedDataVersion = 1 | 2 | 3;
+
+/** The typed-data format new user-policy signatures use ({@link preparePolicySignature}); agent mandates use 3. */
 export const POLICY_TYPED_DATA_VERSION = 2;
+
+/**
+ * The per-agent mandate a format-3 policy carries: who the agent is, which single account it may trade, and the
+ * agent-specific envelope. All fields are shown readably in the wallet and bound by the signature. USD limits are
+ * decimal strings or "unlimited"; `askAboveUsd` may also be "0" (asks before every entry). The four counters use 0 for
+ * "off". `tradingWindows` ("*") and `reduceOnlyAfter` ("never") are reserved: a later phase enforces them, and until
+ * then {@link agentPolicyProblems} refuses any other value so the wallet never shows a limit nothing enforces.
+ */
+export interface AgentMandate {
+  /** The mandate id (a 32-byte hex value); the signer refuses an agent order whose `agentId` has no policy. */
+  agentId: `0x${string}`;
+  /** The agent's own name, shown in quotes beside the `agentId`; third-party text, so capped and sanitized. */
+  agentName: string;
+  /** The one account the agent may trade: the master or a sub-account for isolation (a 20-byte hex address). */
+  agentAccount: `0x${string}`;
+  /** Entry notional above which the agent must ask: "0" asks always, "unlimited" never, else a positive amount. */
+  askAboveUsd: string;
+  /** Cap on the account's total position notional after an order: "unlimited" or a positive amount. */
+  maxOpenNotionalUsd: string;
+  /** Max positions open at once (0 = off). */
+  maxConcurrentPositions: number;
+  /** Max accepted entries per UTC day (0 = off). */
+  maxEntriesPerDay: number;
+  /** After this many consecutive losing round trips, pause entries (0 = off; both cooldown fields 0 or both set). */
+  cooldownLosses: number;
+  /** Minutes to pause entries after the cooldown trips (0 = off). */
+  cooldownMinutes: number;
+  /** Reserved (trading windows); must be "*" until enforced. */
+  tradingWindows: string;
+  /** Reserved (dead-man reduce-only switch); must be "never" until enforced. */
+  reduceOnlyAfter: string;
+}
 
 /** Who and what a policy signature authorizes. */
 export interface PolicyAuthorization {
@@ -123,9 +206,12 @@ export interface PolicyAuthorization {
   nonce: number;
   /**
    * Typed-data format the user signed (the EIP-712 domain version, so the signature binds it). Omitted means 1, the
-   * original format; new signatures use {@link POLICY_TYPED_DATA_VERSION} (2), which shows every policy field.
+   * original format; new signatures use {@link POLICY_TYPED_DATA_VERSION} (2), which shows every policy field; agent
+   * mandates use 3, which also carries {@link agentMandate}.
    */
   typedDataVersion?: PolicyTypedDataVersion;
+  /** The per-agent mandate, required when `typedDataVersion` is 3 and ignored otherwise. */
+  agentMandate?: AgentMandate;
 }
 
 /** A policy plus its authorization and signature (65-byte hex). */
@@ -168,12 +254,23 @@ export type PolicyTypedDataMessage = {
   allowedSpotPairs: string;
   spotTrading: boolean;
   referralCode: string;
+  agentId: `0x${string}`;
+  agentName: string;
+  agentAccount: `0x${string}`;
+  askAboveUsd: string;
+  maxOpenNotionalUsd: string;
+  maxConcurrentPositions: number;
+  maxEntriesPerDay: number;
+  cooldownLosses: number;
+  cooldownMinutes: number;
+  tradingWindows: string;
+  reduceOnlyAfter: string;
 }>;
 
 /** The typed-data format an authorization names (omitted: 1); throws a RangeError for anything else. */
 export function policyTypedDataVersion(auth: Pick<PolicyAuthorization, "typedDataVersion">): PolicyTypedDataVersion {
   const version = auth.typedDataVersion ?? 1;
-  if (version !== 1 && version !== 2) throw new RangeError("typedDataVersion must be 1 or 2");
+  if (version !== 1 && version !== 2 && version !== 3) throw new RangeError("typedDataVersion must be 1, 2 or 3");
   return version;
 }
 
@@ -189,7 +286,12 @@ export function buildPolicyTypedData(policyInput: PolicyInput | Policy, auth: Po
   if (!/^0x[0-9a-fA-F]{40}$/.test(auth.user)) throw new RangeError("user must be a 20-byte hex address");
   if (auth.agent !== undefined && !/^0x[0-9a-fA-F]{40}$/.test(auth.agent)) throw new RangeError("agent must be a 20-byte hex address");
   if (!Number.isSafeInteger(auth.chainId) || auth.chainId <= 0) throw new RangeError("chainId must be a positive integer");
-  const fields = version === 1 ? POLICY_EIP712_TYPES.KokoahPolicy : POLICY_EIP712_TYPES_V2.KokoahPolicy;
+  const fields =
+    version === 1
+      ? POLICY_EIP712_TYPES.KokoahPolicy
+      : version === 2
+        ? POLICY_EIP712_TYPES_V2.KokoahPolicy
+        : POLICY_EIP712_TYPES_V3.KokoahPolicy;
   const common = {
     user: auth.user.toLowerCase() as `0x${string}`,
     agent: (auth.agent ?? ZERO).toLowerCase() as `0x${string}`,
@@ -209,26 +311,32 @@ export function buildPolicyTypedData(policyInput: PolicyInput | Policy, auth: Po
     expiresAt: auth.expiresAt,
     nonce: auth.nonce,
   };
+  // Format 1 shows allowedMarkets as a plain join and binds the rest only through policyHash; formats 2 and 3 render
+  // every field readably (`readable`), which is why it is built only for them (a value format 1 allows may be
+  // ambiguous for the readable formats).
+  const readable = (): PolicyTypedDataMessage => ({
+    ...common,
+    allowedMarkets: policy.allowedCoins === "*" ? "*" : readableList(policy.allowedCoins, "allowedCoins"),
+    allowedOrigins: policy.allowedOrigins === undefined ? "*" : readableList(policy.allowedOrigins, "allowedOrigins"),
+    allowedSubAccounts: readableList(
+      policy.allowedVaultAddresses.map((a) => a.toLowerCase()),
+      "allowedVaultAddresses",
+    ),
+    reduceOnlyExemptFromCaps: policy.exemptReduceOnlyFromNotionalCaps,
+    maxDailyLossUsd: policy.maxDailyLossUsd === undefined ? UNLIMITED : normalizeDecimal(policy.maxDailyLossUsd),
+    maxStopLossDistancePct: policy.maxStopLossDistancePct === undefined ? UNLIMITED : normalizeDecimal(policy.maxStopLossDistancePct),
+    botsWithoutStopLoss: policy.botEntriesWithoutStopLoss === true,
+    maxActionLifetimeMs: policy.maxExpiresAfterWindowMs === null ? UNLIMITED : String(policy.maxExpiresAfterWindowMs),
+    allowedSpotPairs: readableList(policy.allowedSpotCoins ?? [], "allowedSpotCoins"),
+    spotTrading: policy.spotTrading === true,
+    referralCode: readableReferralCode(policy.referralCode),
+  });
   const message: PolicyTypedDataMessage =
     version === 1
       ? { ...common, allowedMarkets: policy.allowedCoins === "*" ? "*" : [...new Set(policy.allowedCoins)].sort().join(",") }
-      : {
-          ...common,
-          allowedMarkets: policy.allowedCoins === "*" ? "*" : readableList(policy.allowedCoins, "allowedCoins"),
-          allowedOrigins: policy.allowedOrigins === undefined ? "*" : readableList(policy.allowedOrigins, "allowedOrigins"),
-          allowedSubAccounts: readableList(
-            policy.allowedVaultAddresses.map((a) => a.toLowerCase()),
-            "allowedVaultAddresses",
-          ),
-          reduceOnlyExemptFromCaps: policy.exemptReduceOnlyFromNotionalCaps,
-          maxDailyLossUsd: policy.maxDailyLossUsd === undefined ? UNLIMITED : normalizeDecimal(policy.maxDailyLossUsd),
-          maxStopLossDistancePct: policy.maxStopLossDistancePct === undefined ? UNLIMITED : normalizeDecimal(policy.maxStopLossDistancePct),
-          botsWithoutStopLoss: policy.botEntriesWithoutStopLoss === true,
-          maxActionLifetimeMs: policy.maxExpiresAfterWindowMs === null ? UNLIMITED : String(policy.maxExpiresAfterWindowMs),
-          allowedSpotPairs: readableList(policy.allowedSpotCoins ?? [], "allowedSpotCoins"),
-          spotTrading: policy.spotTrading === true,
-          referralCode: readableReferralCode(policy.referralCode),
-        };
+      : version === 2
+        ? readable()
+        : { ...readable(), ...agentMandateMessage(auth) };
   return {
     domain: { name: POLICY_DOMAIN_NAME, version: String(version), chainId: auth.chainId },
     types: { KokoahPolicy: fields.map((f): { name: string; type: string } => ({ name: f.name, type: f.type })) },
@@ -248,8 +356,105 @@ export function preparePolicySignature(policyInput: PolicyInput | Policy, auth: 
   return { authorization, typedData: buildPolicyTypedData(policyInput, authorization) };
 }
 
+/** Thrown by {@link prepareAgentPolicySignature} when the policy or mandate is not a valid agent card (format 3). */
+export class AgentPolicyValidationError extends Error {
+  readonly problems: readonly string[];
+  constructor(problems: readonly string[]) {
+    super(`Invalid agent policy: ${problems.join("; ")}`);
+    this.name = "AgentPolicyValidationError";
+    this.problems = problems;
+  }
+}
+
+/** 1 to 40 characters with no control (C0/C1) or invisible (zero-width, BOM, line/para separator) code points. */
+function isAgentNameValid(name: string): boolean {
+  if (typeof name !== "string" || name.length < 1 || name.length > 40) return false;
+  // C0/C1 control, zero-width and other invisible code points (BOM, line/para separators): rejected in a shown name.
+  return !/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\ufeff]/.test(name);
+}
+
+/** "unlimited", or a decimal that is positive (or non-negative when `allowZero`, for `askAboveUsd`'s "0"). */
+function isUsdLimit(x: string, allowZero: boolean): boolean {
+  if (x === UNLIMITED) return true;
+  if (typeof x !== "string" || !isDecimal(x)) return false;
+  const n = Number(normalizeDecimal(x));
+  return allowZero ? n >= 0 : n > 0;
+}
+
+/**
+ * What makes a policy and mandate unfit as an agent card (format 3); empty means it may be signed. The rules the signer
+ * and the wallet both enforce: the base policy binds the `agent` origin only, isolates to one account (no sub-accounts,
+ * never withdraws, no referral code), and carries a real daily-loss limit and a required stop, so an autonomous agent
+ * can never run without them. The mandate's identity and envelope are well-formed, the cooldown pair is both off or
+ * both set, and the reserved windows stay off until a later phase enforces them (fail closed).
+ */
+export function agentPolicyProblems(policyInput: PolicyInput | Policy, mandate: AgentMandate): string[] {
+  const p = parsePolicy(policyInput);
+  const out: string[] = [];
+  if (!(p.allowedOrigins?.length === 1 && p.allowedOrigins[0] === "agent")) out.push('allowedOrigins must be exactly ["agent"]');
+  if (p.allowedVaultAddresses.length !== 0) out.push("an agent policy lists no sub-accounts (isolation is agentAccount)");
+  if (p.maxDailyLossUsd === undefined) out.push("maxDailyLossUsd is required for an agent policy");
+  if (!p.requireStopLossForNewEntries) out.push("requireStopLossForNewEntries must be true for an agent policy");
+  if (p.referralCode !== undefined) out.push("an agent policy carries no referralCode");
+  if (!/^0x[0-9a-fA-F]{64}$/.test(mandate.agentId) || /^0x0+$/.test(mandate.agentId)) out.push("agentId must be a non-zero 32-byte hex value");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(mandate.agentAccount)) out.push("agentAccount must be a 20-byte hex address");
+  if (!isAgentNameValid(mandate.agentName)) out.push("agentName must be 1 to 40 characters with no control or invisible characters");
+  if (!isUsdLimit(mandate.askAboveUsd, true)) out.push('askAboveUsd must be "0", "unlimited" or a positive amount');
+  if (!isUsdLimit(mandate.maxOpenNotionalUsd, false)) out.push('maxOpenNotionalUsd must be "unlimited" or a positive amount');
+  for (const [k, n] of [
+    ["maxConcurrentPositions", mandate.maxConcurrentPositions],
+    ["maxEntriesPerDay", mandate.maxEntriesPerDay],
+    ["cooldownLosses", mandate.cooldownLosses],
+    ["cooldownMinutes", mandate.cooldownMinutes],
+  ] as const) {
+    if (!Number.isSafeInteger(n) || n < 0 || n > 0xffffffff) out.push(`${k} must be an integer from 0 to 4294967295 (0 = off)`);
+  }
+  if ((mandate.cooldownLosses === 0) !== (mandate.cooldownMinutes === 0)) out.push("cooldownLosses and cooldownMinutes must be both 0 (off) or both set");
+  if (mandate.tradingWindows !== "*") out.push('tradingWindows must be "*" until trading windows are enforced');
+  if (mandate.reduceOnlyAfter !== "never") out.push('reduceOnlyAfter must be "never" until it is enforced');
+  return out;
+}
+
+/** The basics of an agent-mandate signature, beside the {@link AgentMandate} and the base policy. */
+export interface AgentPolicyAuthorizationInput {
+  user: `0x${string}`;
+  /** The Kokoah automation key the mandate's orders sign with; omitted/zero = any key of this user. */
+  agent?: `0x${string}`;
+  network: "Mainnet" | "Testnet";
+  chainId: number;
+  issuedAt: number;
+  expiresAt: number;
+  nonce: number;
+  mandate: AgentMandate;
+}
+
+/**
+ * Starts a format-3 agent-mandate signature: validates the policy and mandate ({@link agentPolicyProblems}, throwing
+ * {@link AgentPolicyValidationError}), then returns the authorization (with `typedDataVersion` 3 and the mandate) and
+ * its typed data. Sign `typedData` with the main wallet and store `authorization` with the policy and signature.
+ */
+export function prepareAgentPolicySignature(policyInput: PolicyInput | Policy, input: AgentPolicyAuthorizationInput) {
+  const problems = agentPolicyProblems(policyInput, input.mandate);
+  if (problems.length) throw new AgentPolicyValidationError(problems);
+  const authorization: PolicyAuthorization = {
+    user: input.user,
+    agent: input.agent,
+    network: input.network,
+    chainId: input.chainId,
+    issuedAt: input.issuedAt,
+    expiresAt: input.expiresAt,
+    nonce: input.nonce,
+    typedDataVersion: 3,
+    agentMandate: input.mandate,
+  };
+  return { authorization, typedData: buildPolicyTypedData(policyInput, authorization) };
+}
+
 /** A policy or authorization field, as {@link policyTypedDataFields} names what a typed-data field shows. */
-export type PolicyFieldName = Exclude<keyof Policy, "version"> | Exclude<keyof PolicyAuthorization, "chainId" | "typedDataVersion">;
+export type PolicyFieldName =
+  | Exclude<keyof Policy, "version">
+  | Exclude<keyof PolicyAuthorization, "chainId" | "typedDataVersion" | "agentMandate">
+  | keyof AgentMandate;
 
 /** A field of the policy typed data: its EIP-712 name and type, and the policy or authorization fields it shows. */
 export interface PolicyTypedDataField {
@@ -290,12 +495,29 @@ const SHOWS: Record<(typeof POLICY_EIP712_TYPES_V2.KokoahPolicy)[number]["name"]
   nonce: ["nonce"],
 };
 
+/** Format 3 shows everything format 2 does, plus the agent mandate (each field shows its own mandate value). */
+const SHOWS_V3: Record<(typeof POLICY_EIP712_TYPES_V3.KokoahPolicy)[number]["name"], readonly PolicyFieldName[]> = {
+  ...SHOWS,
+  agentId: ["agentId"],
+  agentName: ["agentName"],
+  agentAccount: ["agentAccount"],
+  askAboveUsd: ["askAboveUsd"],
+  maxOpenNotionalUsd: ["maxOpenNotionalUsd"],
+  maxConcurrentPositions: ["maxConcurrentPositions"],
+  maxEntriesPerDay: ["maxEntriesPerDay"],
+  cooldownLosses: ["cooldownLosses"],
+  cooldownMinutes: ["cooldownMinutes"],
+  tradingWindows: ["tradingWindows"],
+  reduceOnlyAfter: ["reduceOnlyAfter"],
+};
+
 /**
  * The fields a wallet shows for a policy signature in the given format (default: the current one), in order, with the
  * policy and authorization fields each one shows. Policy fields no entry shows are bound only through `policyHash`:
  * in format 2 there are none.
  */
 export function policyTypedDataFields(version: PolicyTypedDataVersion = POLICY_TYPED_DATA_VERSION): PolicyTypedDataField[] {
+  if (version === 3) return POLICY_EIP712_TYPES_V3.KokoahPolicy.map((f) => ({ name: f.name, type: f.type, shows: SHOWS_V3[f.name] }));
   const fields = version === 1 ? POLICY_EIP712_TYPES.KokoahPolicy : POLICY_EIP712_TYPES_V2.KokoahPolicy;
   return fields.map((f) => ({ name: f.name, type: f.type, shows: SHOWS[f.name] }));
 }
@@ -320,6 +542,39 @@ function readableReferralCode(code: string | undefined): string {
   if (code === undefined) return NONE;
   if (code.toLowerCase() === NONE) throw new RangeError(`referralCode can't be shown unambiguously: ${JSON.stringify(code)}`);
   return code;
+}
+
+/**
+ * The agent-mandate part of a format-3 message, with the structural checks needed to encode it (bytes32 `agentId`,
+ * address `agentAccount`, uint32 counters). USD limits normalize, keeping the "unlimited" (and "0") words. The
+ * semantic rules an agent card must also pass are {@link agentPolicyProblems}.
+ */
+function agentMandateMessage(auth: PolicyAuthorization) {
+  const m = auth.agentMandate;
+  if (!m) throw new RangeError("format 3 needs an agentMandate");
+  if (!/^0x[0-9a-fA-F]{64}$/.test(m.agentId)) throw new RangeError("agentId must be a 32-byte hex value");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(m.agentAccount)) throw new RangeError("agentAccount must be a 20-byte hex address");
+  for (const [k, n] of [
+    ["maxConcurrentPositions", m.maxConcurrentPositions],
+    ["maxEntriesPerDay", m.maxEntriesPerDay],
+    ["cooldownLosses", m.cooldownLosses],
+    ["cooldownMinutes", m.cooldownMinutes],
+  ] as const) {
+    if (!Number.isSafeInteger(n) || n < 0 || n > 0xffffffff) throw new RangeError(`${k} must be an integer from 0 to 4294967295`);
+  }
+  return {
+    agentId: m.agentId.toLowerCase() as `0x${string}`,
+    agentName: m.agentName,
+    agentAccount: m.agentAccount.toLowerCase() as `0x${string}`,
+    askAboveUsd: m.askAboveUsd === UNLIMITED ? UNLIMITED : normalizeDecimal(m.askAboveUsd),
+    maxOpenNotionalUsd: m.maxOpenNotionalUsd === UNLIMITED ? UNLIMITED : normalizeDecimal(m.maxOpenNotionalUsd),
+    maxConcurrentPositions: m.maxConcurrentPositions,
+    maxEntriesPerDay: m.maxEntriesPerDay,
+    cooldownLosses: m.cooldownLosses,
+    cooldownMinutes: m.cooldownMinutes,
+    tradingWindows: m.tradingWindows,
+    reduceOnlyAfter: m.reduceOnlyAfter,
+  };
 }
 
 /** Recovers the address that signed a policy authorization (in the typed-data format it names). */

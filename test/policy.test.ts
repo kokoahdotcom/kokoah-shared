@@ -5,6 +5,9 @@ import { compileAction } from "../src/actions/index.js";
 import type { ActionIntentInput } from "../src/intents/index.js";
 import { parseActionIntent } from "../src/intents/index.js";
 import {
+  type AgentMandate,
+  agentPolicyProblems,
+  AgentPolicyValidationError,
   buildPolicyTypedData,
   canonicalPolicyJson,
   createGuardianPolicy,
@@ -18,10 +21,12 @@ import {
   type PolicyContext,
   POLICY_EIP712_TYPES,
   POLICY_EIP712_TYPES_V2,
+  POLICY_EIP712_TYPES_V3,
   POLICY_TYPED_DATA_VERSION,
   PolicySchema,
   policyTypedDataFields,
   PolicyValidationError,
+  prepareAgentPolicySignature,
   preparePolicySignature,
   recoverPolicySigner,
   summarizePolicy,
@@ -374,7 +379,7 @@ describe("signed policies (EIP-712)", () => {
     expect(() => buildPolicyTypedData(policy, { ...auth, expiresAt: auth.issuedAt })).toThrow(RangeError);
     expect(() => buildPolicyTypedData(policy, { ...auth, user: "0x12" as `0x${string}` })).toThrow(RangeError);
     expect(() => buildPolicyTypedData(policy, { ...auth, chainId: 0 })).toThrow(RangeError);
-    expect(() => buildPolicyTypedData(policy, { ...auth, typedDataVersion: 3 as never })).toThrow(/typedDataVersion must be 1 or 2/);
+    expect(() => buildPolicyTypedData(policy, { ...auth, typedDataVersion: 4 as never })).toThrow(/typedDataVersion must be 1, 2 or 3/);
   });
 });
 
@@ -681,5 +686,133 @@ describe("regressions from the security review", () => {
     const g = createGuardianPolicy({ builder: BUILDER, allowedCoins: ["BTC"], maxOrderNotionalUsd: 1, maxDailyNotionalUsd: 1 });
     expect(g.allowedActionTypes).not.toContain("scheduleCancel");
     expect(g.maxStopLossDistancePct).toBe(25);
+  });
+});
+
+describe("signed policies, format 3 (agent mandate)", () => {
+  const user = privateKeyToAccount(generatePrivateKey());
+  const agentPolicy: Policy = parsePolicy({
+    version: 1,
+    allowedActionTypes: ["order", "cancel", "cancelByCloid", "updateLeverage"],
+    allowedCoins: ["BTC", "ETH"],
+    maxOrderNotionalUsd: 1_000,
+    maxDailyNotionalUsd: 5_000,
+    maxDailyLossUsd: 200,
+    maxLeverage: 5,
+    requireStopLossForNewEntries: true,
+    maxOrdersPerMinute: 20,
+    priceBandPct: 2,
+    allowedVaultAddresses: [],
+    requiredBuilder: BUILDER,
+    maxExpiresAfterWindowMs: null,
+    allowedOrigins: ["agent"],
+  });
+  const mandate: AgentMandate = {
+    agentId: `0x${"ab".repeat(32)}`,
+    agentName: "Trend-1",
+    agentAccount: "0x3333333333333333333333333333333333333333",
+    askAboveUsd: "210",
+    maxOpenNotionalUsd: "1000",
+    maxConcurrentPositions: 3,
+    maxEntriesPerDay: 20,
+    cooldownLosses: 0,
+    cooldownMinutes: 0,
+    tradingWindows: "*",
+    reduceOnlyAfter: "never",
+  };
+  const base = { user: user.address, network: "Testnet" as const, chainId: 421614, issuedAt: NOW, expiresAt: NOW + 30 * 86_400_000, nonce: 1 };
+  const at = { now: NOW + 1 };
+
+  it("signs and verifies an agent mandate, and binds every agent field", async () => {
+    const { authorization, typedData } = prepareAgentPolicySignature(agentPolicy, { ...base, mandate });
+    expect(authorization.typedDataVersion).toBe(3);
+    expect(authorization.agentMandate).toEqual(mandate);
+    expect(typedData.domain).toEqual({ name: "Kokoah Policy", version: "3", chainId: 421614 });
+    expect(typedData.types.KokoahPolicy).toEqual(POLICY_EIP712_TYPES_V3.KokoahPolicy);
+    expect(Object.keys(typedData.message)).toEqual(POLICY_EIP712_TYPES_V3.KokoahPolicy.map((f) => f.name));
+    expect(typedData.message).toMatchObject({
+      allowedOrigins: "agent",
+      allowedSubAccounts: "none",
+      canWithdrawOrTransfer: false,
+      referralCode: "none",
+      agentId: `0x${"ab".repeat(32)}`,
+      agentName: "Trend-1",
+      agentAccount: "0x3333333333333333333333333333333333333333",
+      askAboveUsd: "210",
+      maxOpenNotionalUsd: "1000",
+      maxConcurrentPositions: 3,
+      maxEntriesPerDay: 20,
+      cooldownLosses: 0,
+      cooldownMinutes: 0,
+      tradingWindows: "*",
+      reduceOnlyAfter: "never",
+    });
+    const signature = await user.signTypedData(typedData);
+    const signed = { policy: agentPolicy, authorization, signature };
+    expect(await verifyPolicySignature(signed, at)).toBe(true);
+    expect((await recoverPolicySigner(signed)).toLowerCase()).toBe(user.address.toLowerCase());
+    // Tampering with any agent field breaks the signature (it is bound directly, not only through policyHash).
+    const tampered = { ...authorization, agentMandate: { ...mandate, askAboveUsd: "100000" } };
+    expect(await verifyPolicySignature({ ...signed, authorization: tampered }, at)).toBe(false);
+    // The same signature claimed as format 2 recovers someone else.
+    expect(await verifyPolicySignature({ ...signed, authorization: { ...authorization, typedDataVersion: 2 } }, at)).toBe(false);
+  });
+
+  it("golden: format 3's type and digest are pinned (the extension decoder matches them exactly)", () => {
+    const td = buildPolicyTypedData(agentPolicy, {
+      user: "0x3333333333333333333333333333333333333333",
+      network: "Testnet",
+      chainId: 421614,
+      issuedAt: 1_790_000_000_000,
+      expiresAt: 1_790_000_000_000 + 86_400_000,
+      nonce: 7,
+      typedDataVersion: 3,
+      agentMandate: mandate,
+    });
+    expect(POLICY_EIP712_TYPES_V3.KokoahPolicy).toHaveLength(39);
+    expect(hashPolicy(agentPolicy)).toBe("0x94eb38795827338bbbc5524d573cc776cd60be403b43392475d7f70c3adcfc53");
+    expect(hashTypedData(td)).toBe("0xff09c8e5d95ec70c609f73de1214086d344a13a89063a70dc03cac83ffe39376");
+  });
+
+  it("lists the readable fields: format 3 shows every format-2 field plus the agent mandate", () => {
+    const fields = policyTypedDataFields(3);
+    expect(fields.map(({ name, type }) => ({ name, type }))).toEqual(POLICY_EIP712_TYPES_V3.KokoahPolicy);
+    const agentShown = Object.fromEntries(fields.filter((f) => f.shows.length === 1).map((f) => [f.name, f.shows[0]]));
+    for (const k of ["agentId", "agentName", "agentAccount", "askAboveUsd", "maxOpenNotionalUsd", "maxConcurrentPositions", "maxEntriesPerDay", "cooldownLosses", "cooldownMinutes", "tradingWindows", "reduceOnlyAfter"]) {
+      expect(agentShown[k]).toBe(k);
+    }
+  });
+
+  it("refuses a policy or mandate that is not a valid agent card", () => {
+    expect(agentPolicyProblems(agentPolicy, mandate)).toEqual([]);
+    const bad: Array<[Partial<Policy> | null, Partial<AgentMandate> | null, RegExp]> = [
+      [{ allowedOrigins: ["agent", "bot"] }, null, /allowedOrigins must be exactly/],
+      [{ allowedOrigins: undefined }, null, /allowedOrigins must be exactly/],
+      [{ allowedVaultAddresses: ["0x2222222222222222222222222222222222222222"] }, null, /no sub-accounts/],
+      [{ maxDailyLossUsd: undefined }, null, /maxDailyLossUsd is required/],
+      [{ requireStopLossForNewEntries: false }, null, /requireStopLossForNewEntries must be true/],
+      [{ referralCode: "KOKOAH" }, null, /no referralCode/],
+      [null, { agentId: "0x00" }, /agentId must be a non-zero/],
+      [null, { agentId: `0x${"00".repeat(32)}` }, /agentId must be a non-zero/],
+      [null, { agentAccount: "0x12" }, /agentAccount must be/],
+      [null, { agentName: "" }, /agentName must be/],
+      [null, { agentName: "x".repeat(41) }, /agentName must be/],
+      [null, { agentName: "bad​name" }, /agentName must be/],
+      [null, { askAboveUsd: "-5" }, /askAboveUsd must be/],
+      [null, { maxOpenNotionalUsd: "0" }, /maxOpenNotionalUsd must be/],
+      [null, { cooldownLosses: 3, cooldownMinutes: 0 }, /both 0 .*or both set/],
+      [null, { cooldownLosses: 0, cooldownMinutes: 30 }, /both 0 .*or both set/],
+      [null, { maxEntriesPerDay: -1 }, /maxEntriesPerDay must be/],
+      [null, { tradingWindows: "mon-fri@13:00-21:00" }, /tradingWindows must be/],
+      [null, { reduceOnlyAfter: "2026-01-01T00:00:00Z" }, /reduceOnlyAfter must be/],
+    ];
+    for (const [pp, mm, re] of bad) {
+      const p = pp ? parsePolicy({ ...agentPolicy, ...pp }) : agentPolicy;
+      const m = mm ? { ...mandate, ...mm } : mandate;
+      const problems = agentPolicyProblems(p, m);
+      expect(problems.some((x) => re.test(x)), `${re} in ${JSON.stringify(problems)}`).toBe(true);
+    }
+    expect(() => prepareAgentPolicySignature(agentPolicy, { ...base, mandate: { ...mandate, reduceOnlyAfter: "soon" } })).toThrow(AgentPolicyValidationError);
+    expect(() => prepareAgentPolicySignature(parsePolicy({ ...agentPolicy, maxDailyLossUsd: undefined }), { ...base, mandate })).toThrow(/maxDailyLossUsd is required/);
   });
 });
