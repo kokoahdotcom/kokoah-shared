@@ -744,7 +744,7 @@ function evalDailyLossLock(rule: DailyLossLockRule, ps: PositionState, now: numb
   const byPct = rule.maxLossPctOfEquity !== undefined && base > 0 && (lossUsd / base) * 100 >= rule.maxLossPctOfEquity;
   if (!byUsd && !byPct) return result(e, st, "armed", "Loss within limits");
   const lockedUntil = nextDailyResetAfter(now, rule.resetMinuteUtc ?? 0);
-  e.alert("DAILY_LOSS_LOCKED", "critical", `Daily loss of $${lossUsd.toFixed(2)} reached your limit: new Kokoah orders are blocked until the daily reset. Closing and reducing stay allowed.`, undefined, {
+  e.alert("DAILY_LOSS_LOCKED", "critical", `Daily loss of $${lossUsd.toFixed(2)} reached your limit: opening or adding to positions through Kokoah is blocked until the daily reset. Closing and reducing still work.`, undefined, {
     lossUsd,
     lockedUntil,
   });

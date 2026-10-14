@@ -556,7 +556,11 @@ describe("daily loss lock", () => {
     expect(evaluateRule(rule, {}, state({}, [], { equityUsd: 10_000, realizedPnlTodayUsd: -400 }), NOW).fire).toBe(false);
     const hit = evaluateRule(rule, {}, state({}, [], { equityUsd: 10_000, realizedPnlTodayUsd: -600 }), NOW);
     expect(hit).toMatchObject({ fire: true, status: "triggered", intents: [] });
-    expect(hit.alerts[0]?.severity).toBe("critical");
+    expect(hit.alerts[0]).toMatchObject({
+      code: "DAILY_LOSS_LOCKED",
+      severity: "critical",
+      message: "Daily loss of $600.00 reached your limit: opening or adding to positions through Kokoah is blocked until the daily reset. Closing and reducing still work.",
+    });
     const locked = advance(rule, hit);
     const reset = nextDailyResetAfter(NOW);
     expect(locked.state).toEqual({ lockedUntil: reset });
