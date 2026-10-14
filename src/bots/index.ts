@@ -13,3 +13,4 @@ export * from "./copy.js";
 export * from "./signal.js";
 export * from "./ledger.js";
 export * from "./needs.js";
+export * from "./backtest.js";
