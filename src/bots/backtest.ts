@@ -97,6 +97,9 @@ export interface BacktestResult {
   endPrice: number;
   /** Price change over the period (percent). */
   priceChangePct: number;
+  /** Lowest and highest price of the period. */
+  lowPrice: number;
+  highPrice: number;
   equityUsd: number;
   /** After fees and funding: realized + unrealized − fees + funding. */
   pnlUsd: number;
@@ -405,6 +408,8 @@ export function backtestBot(input: BacktestInput): BacktestResult {
     startPrice: first.o,
     endPrice: last.c,
     priceChangePct: ((last.c - first.o) / first.o) * 100,
+    lowPrice: candles.reduce((m, k) => Math.min(m, k.l), Infinity),
+    highPrice: candles.reduce((m, k) => Math.max(m, k.h), -Infinity),
     equityUsd: input.equityUsd,
     pnlUsd,
     realizedUsd: book.realizedUsd,

@@ -34,6 +34,8 @@ describe("bot backtest", () => {
     expect(r.pnlUsd).toBeCloseTo(r.realizedUsd - r.feesUsd + r.fundingUsd + r.unrealizedUsd, 6);
     expect(r.pnlUsd).toBeGreaterThan(0);
     expect(r.inRangePct).toBe(100);
+    expect(r.lowPrice).toBeLessThan(2300);
+    expect(r.highPrice).toBeGreaterThan(2700);
     expect(r.curve.length).toBe(48);
     // Resting fills are at grid lines with the maker fee.
     const lines = new Set([2000, 2100, 2200, 2300, 2400, 2500, 2600, 2700, 2800, 2900, 3000]);
