@@ -66,6 +66,8 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   (`ACTION_TYPE_NOT_ALLOWED`). Keys with manual trading are unchanged.
 - `evaluatePolicy`: a `scheduleCancel` more than `SCHEDULE_CANCEL_MAX_LEAD_MS` (1 h) ahead of `context.now` is
   `INVALID_SUBJECT`, so raw wire actions get the bound `compileAction` already applies.
+- `verifyPolicySignature`: a format-3 (agent mandate) signature verifies only when the policy and mandate pass
+  `agentPolicyProblems`, also when its typed data was built without `prepareAgentPolicySignature`.
 - `compileAction`: spot buys carry no builder field (Hyperliquid charges builder fees on spot sells only); checked
   against new Python SDK golden vectors.
 - `signing`: `buildSendAsset` (readable `HyperliquidTransaction:SendAsset` for the main wallet; `fromSubAccount` is

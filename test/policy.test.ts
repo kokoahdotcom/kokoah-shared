@@ -794,6 +794,18 @@ describe("signed policies, format 3 (agent mandate)", () => {
     expect(await verifyPolicySignature({ ...signed, authorization: { ...authorization, typedDataVersion: 2 } }, at)).toBe(false);
   });
 
+  it("verifies a format-3 signature only for a valid agent card, however it was produced", async () => {
+    const sign = async (p: Policy, m: AgentMandate) => {
+      const authorization: PolicyAuthorization = { ...base, typedDataVersion: 3, agentMandate: m };
+      return { policy: p, authorization, signature: await user.signTypedData(buildPolicyTypedData(p, authorization)) };
+    };
+    const exempt = await sign(parsePolicy({ ...agentPolicy, botEntriesWithoutStopLoss: true }), mandate);
+    expect((await recoverPolicySigner(exempt)).toLowerCase()).toBe(user.address.toLowerCase());
+    expect(await verifyPolicySignature(exempt, at)).toBe(false);
+    expect(await verifyPolicySignature(await sign(agentPolicy, { ...mandate, tradingWindows: "mon-fri@13:00-21:00" }), at)).toBe(false);
+    expect(await verifyPolicySignature(await sign(agentPolicy, mandate), at)).toBe(true);
+  });
+
   it("golden: format 3's type and digest are pinned (the extension decoder matches them exactly)", () => {
     const td = buildPolicyTypedData(agentPolicy, {
       user: "0x3333333333333333333333333333333333333333",
