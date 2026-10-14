@@ -286,6 +286,8 @@ Other rules:
   `maxStopLossDistancePct` of the entry, when set), or an existing exchange stop (`context.hasStopLoss`). Modifies of
   non-reduce-only orders need an existing stop, and are blocked by the daily loss lock like new entries.
 - Always-place modifies (`a: true`) are refused when a builder is required (they would place orders without it).
+- `scheduleCancel` (cancel all open orders at `time`) may be at most 1 h ahead of `context.now`, the bound
+  `compileAction` applies, also when the subject is a raw wire action.
 - A wire subject's `origin` is self-declared; `allowedOrigins` is only meaningful for intents and compiled subjects
   built by the signer itself.
 - Spot is denied unless the pair is in `allowedSpotCoins` (Convert's stablecoin pairs, `STABLECOIN_PAIRS`, and with

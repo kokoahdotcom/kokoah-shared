@@ -219,6 +219,16 @@ describe("order limits", () => {
     expect(evalIntent({ kind: "cancel", cancels: [{ coin: "BTC", oid: 1 }], origin: "manual" }, { ordersInLastMinute: 100 }).allowed).toBe(true);
   });
 
+  it("bounds scheduleCancel to 1 hour ahead, also for raw wire actions", () => {
+    const wire = (time?: number) => ({ kind: "wire" as const, action: { type: "scheduleCancel", ...(time === undefined ? {} : { time }) }, expiresAfter: NOW + 1000 });
+    expect(evaluatePolicy(wire(NOW + 3_600_000), ctx()).allowed).toBe(true);
+    expect(evaluatePolicy(wire(), ctx()).allowed).toBe(true); // clears the timer
+    const far = evaluatePolicy(wire(NOW + 3_600_001), ctx());
+    expect(codes(far)).toEqual(["INVALID_SUBJECT"]);
+    expect(far.violations[0]!.message).toBe("scheduleCancel time must be at most 1 hour in the future.");
+    expect(codes(evalIntent({ kind: "scheduleCancel", time: NOW + 86_400_000, origin: "manual" }))).toEqual(["INVALID_SUBJECT"]);
+  });
+
   it("enforces the expiresAfter window", () => {
     expect(codes(evalIntent(entry(), { expiresAfter: undefined }))).toEqual(["EXPIRES_AFTER_REQUIRED"]);
     expect(codes(evalIntent(entry(), { expiresAfter: NOW }))).toEqual(["EXPIRES_AFTER_IN_PAST"]);
