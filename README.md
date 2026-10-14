@@ -125,9 +125,12 @@ rather than failing the whole registry:
 - they fail `validateCoin`;
 - they are listed by `registry.skippedEntries()` (log them) and counted in `DexInfo.skippedMarkets`.
 
+A market with invalid margin data (a max leverage or margin tier ≤ 0, or an empty margin table) is skipped the same
+way, with reason `invalid_margin`, so one bad market never stops the others.
+
 Structural inconsistencies still throw `MarketRegistryError`: a parseable coin on the wrong dex, or `perpDexs` that
 doesn't line up with `allPerpMetas`. `fromInfo({ …, strict: true })` restores the 0.1.0 behaviour of throwing on any
-bad name.
+bad name (and throws on invalid margin data too).
 
 ### `precision`
 `formatPrice(price, szDecimals, kind)`, `roundPriceToTick(price, szDecimals, kind, "nearest" | "up" | "down")`,

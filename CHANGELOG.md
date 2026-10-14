@@ -78,6 +78,13 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   `buildSubAccountTransfer` moves funds between the main account and one of its sub-accounts with one `sendAsset`
   (checked against a new Python SDK golden vector).
 
+### Fixed
+- `MarketRegistry.fromInfo` no longer fails as a whole on one market's invalid margin data (a max leverage or margin
+  tier ≤ 0, or an empty margin table): it threw a `RangeError`, so a single bad HIP-3 market left signers without a
+  registry for every market. Such a market is now skipped like an unparseable name: it keeps its positional index, is
+  untradeable, and is reported by `skippedEntries()` (new reason `invalid_margin`) and in `DexInfo.skippedMarkets`.
+  With `strict: true` it throws `MarketRegistryError`.
+
 ## [0.1.3] - 2026-09-23
 
 ### Changed
