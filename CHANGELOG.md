@@ -7,6 +7,10 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `bots`: `backtestCopy` runs a copy bot over a trader's past fills with the server's own `copyStep` (positions rebuilt
+  from the fills, seen once per poll; copy orders at the latest price with 10 bps slippage and the taker fee; funding at
+  the trader's rates; drawdown and daily loss stops; liquidation), and `copyChanges` reduces fills to the position
+  changes the poller would see (the same copy, far less data).
 - `bots`: `backtestBot` runs a grid or DCA bot over past candles with the server's own planners (fills only when the
   price trades through, maker/taker and builder fees, funding, the leverage cap, the order pace, liquidation of an
   account holding only the bot), with `gridWorstPositionUsd` and `backtestInterval` (candle size for a period).
