@@ -7,6 +7,9 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `bots`: `backtestBot` runs a grid or DCA bot over past candles with the server's own planners (fills only when the
+  price trades through, maker/taker and builder fees, funding, the leverage cap, the order pace, liquidation of an
+  account holding only the bot), with `gridWorstPositionUsd` and `backtestInterval` (candle size for a period).
 - `policy`: policy signatures in typed-data format 2 (EIP-712 domain "Kokoah Policy", version "2",
   `POLICY_EIP712_TYPES_V2`): besides format 1's fields, the wallet shows `allowedOrigins`, `allowedSubAccounts`,
   `reduceOnlyExemptFromCaps`, `maxDailyLossUsd`, `maxStopLossDistancePct`, `botsWithoutStopLoss`,
