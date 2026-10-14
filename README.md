@@ -588,7 +588,7 @@ function assessOrderRisk(input: OrderRiskInput): OrderRiskAssessment;
   verify its signature first and show those fields itself. Format 2 shows every field.
 - Market orders on markets with coarse ticks: when one tick is wider than the slippage tolerance, the IOC price is one
   tick beyond the tolerance (to stay marketable).
-- `updateIsolatedMargin` amounts are capped only for automation keys (policies whose `allowedOrigins` leave out
-  `manual`): they may add at most `maxOrderNotionalUsd` per action and never remove margin. Keys with manual trading
-  are not capped (HL itself keeps initial margin on removal).
+- `updateIsolatedMargin` amounts are capped only for automation (a policy whose `allowedOrigins` leaves out `manual`,
+  or an origin other than `manual`): it may add at most `maxOrderNotionalUsd` per action and never remove margin. The
+  user's own margin changes are not capped (HL itself keeps initial margin on removal).
 - Named agents are limited to 3 per master account without sub-accounts; the library does not manage slots.

@@ -268,16 +268,21 @@ describe("order limits", () => {
     const wire = (ntli: number) => ({ kind: "wire" as const, action: { type: "updateIsolatedMargin", asset: 0, isBuy: true, ntli }, expiresAfter: NOW + 1000, origin: "guardian" as const });
     expect(evaluatePolicy(wire(50_000_000_000), ctx(server)).allowed).toBe(true);
     expect(codes(evaluatePolicy(wire(50_000_000_001), ctx(server)))).toEqual(["ORDER_NOTIONAL_EXCEEDED"]);
-    // The user's own key is not capped.
+    // The user's own hand is not capped.
     expect(evalIntent(margin("1000000", "manual")).allowed).toBe(true);
-    expect(evaluatePolicy(wire(1_000_000_000_000), ctx()).allowed).toBe(true);
+    expect(evaluatePolicy({ ...wire(1_000_000_000_000), origin: "manual" }, ctx()).allowed).toBe(true);
+    // A server origin is automation even under a policy that names no origins (the signer service signs only those).
+    expect(codes(evalIntent(margin("60000", "guardian")))).toEqual(["ORDER_NOTIONAL_EXCEEDED"]);
+    expect(codes(evalIntent(margin("-50", "bot")))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(codes(evaluatePolicy(wire(60_000_000_000), ctx()))).toEqual(["ORDER_NOTIONAL_EXCEEDED"]);
   });
 
-  it("refuses topUpIsolatedOnlyMargin (no amount to cap) for automation keys only", () => {
+  it("refuses topUpIsolatedOnlyMargin (no amount to cap) for automation only", () => {
     const withTopUp = { ...policy, allowedActionTypes: [...policy.allowedActionTypes, "topUpIsolatedOnlyMargin"] as Policy["allowedActionTypes"] };
     const topUp = { kind: "wire" as const, action: { type: "topUpIsolatedOnlyMargin", asset: 0, leverage: "0.5" }, expiresAfter: NOW + 1000, origin: "guardian" as const };
     expect(codes(evaluatePolicy(topUp, ctx({ policy: { ...withTopUp, allowedOrigins: ["guardian"] } })))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
-    expect(evaluatePolicy(topUp, ctx({ policy: withTopUp })).allowed).toBe(true);
+    expect(codes(evaluatePolicy(topUp, ctx({ policy: withTopUp })))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(evaluatePolicy({ ...topUp, origin: "manual" }, ctx({ policy: withTopUp })).allowed).toBe(true);
   });
 
   it("denies new entries while the daily loss lock is active, but allows reducing", () => {
