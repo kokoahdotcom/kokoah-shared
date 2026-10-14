@@ -5,7 +5,8 @@
  *    exactly the policy's `referralCode`, for the main account (a raw wire action only);
  * 2. anything not in the policy's allow-list is denied;
  * 3. per-action limits: coins, notional, daily notional, leverage, stop-loss requirement (origin `bot` is exempt only
- *    when the policy says `botEntriesWithoutStopLoss`), orders per minute,
+ *    when the policy says `botEntriesWithoutStopLoss`), orders per minute, isolated margin (automation keys only add it,
+ *    at most `maxOrderNotionalUsd` at a time),
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
  *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock;
  * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain order (IOC, or with
@@ -222,10 +223,19 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
     case "topUpIsolatedOnlyMargin": {
       checkCoin(wire ? resolveCoin(wire.asset as number, context, add) : intent?.kind === "updateIsolatedMargin" ? intent.coin : undefined);
       // A key without manual trading (the servers' automation keys) may add margin to an isolated position, never take
-      // it out: removing it moves the user's own position toward liquidation, which no notional cap covers.
-      const amount = wire ? Number(wire.ntli) : intent?.kind === "updateIsolatedMargin" ? Number(intent.amountUsd) : Number.NaN;
-      if (actionType === "updateIsolatedMargin" && policy.allowedOrigins && !policy.allowedOrigins.includes("manual") && !(amount > 0)) {
-        add("ACTION_TYPE_NOT_ALLOWED", "Automation may add margin to an isolated position, not remove it.");
+      // it out: removing it moves the user's own position toward liquidation, which no notional cap covers. It adds at
+      // most `maxOrderNotionalUsd` at a time (the margin of the largest order the key may place, even at 1×), never the
+      // account's whole cross collateral at once. `topUpIsolatedOnlyMargin` names a target leverage instead of an
+      // amount, so it can't be capped: automation keys don't sign it.
+      const amountUsd = wire ? Number(wire.ntli) / 1e6 : intent?.kind === "updateIsolatedMargin" ? Number(intent.amountUsd) : Number.NaN;
+      if (policy.allowedOrigins && !policy.allowedOrigins.includes("manual")) {
+        if (actionType === "topUpIsolatedOnlyMargin") {
+          add("ACTION_TYPE_NOT_ALLOWED", "Automation may add isolated margin only as an amount (updateIsolatedMargin), so it can be capped.");
+        } else if (!(amountUsd > 0)) {
+          add("ACTION_TYPE_NOT_ALLOWED", "Automation may add margin to an isolated position, not remove it.");
+        } else if (!(amountUsd <= policy.maxOrderNotionalUsd)) {
+          add("ORDER_NOTIONAL_EXCEEDED", `Adding $${fmt(amountUsd)} of margin at once is above the $${fmt(policy.maxOrderNotionalUsd)} order limit.`);
+        }
       }
       break;
     }

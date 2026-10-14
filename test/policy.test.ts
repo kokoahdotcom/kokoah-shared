@@ -244,6 +244,32 @@ describe("order limits", () => {
     expect(evalIntent(margin("-50", "manual")).allowed).toBe(true);
   });
 
+  it("caps the isolated margin an automation key adds at once at the order limit", () => {
+    const margin = (amountUsd: string, origin: string) => ({ kind: "updateIsolatedMargin", coin: "BTC", amountUsd, origin }) as ActionIntentInput;
+    const server = { policy: { ...policy, allowedOrigins: ["guardian", "telegram"] as Policy["allowedOrigins"] } };
+    expect(evalIntent(margin("50000", "telegram"), server).allowed).toBe(true);
+    const over = evalIntent(margin("50000.01", "telegram"), server);
+    expect(codes(over)).toEqual(["ORDER_NOTIONAL_EXCEEDED"]);
+    expect(over.violations[0]!.message).toBe("Adding $50000.01 of margin at once is above the $50000 order limit.");
+    // The compiled wire action (ntli is USD × 1e6) is what the signer checks.
+    const compile = (amountUsd: string) => compileAction(parseActionIntent(margin(amountUsd, "guardian")), { registry, builder: { address: BUILDER.b, feeTenthsBps: BUILDER.f }, now: NOW });
+    expect(evaluatePolicy({ kind: "compiled", compiled: compile("50000") }, ctx(server)).allowed).toBe(true);
+    expect(codes(evaluatePolicy({ kind: "compiled", compiled: compile("50000.000001") }, ctx(server)))).toEqual(["ORDER_NOTIONAL_EXCEEDED"]);
+    const wire = (ntli: number) => ({ kind: "wire" as const, action: { type: "updateIsolatedMargin", asset: 0, isBuy: true, ntli }, expiresAfter: NOW + 1000, origin: "guardian" as const });
+    expect(evaluatePolicy(wire(50_000_000_000), ctx(server)).allowed).toBe(true);
+    expect(codes(evaluatePolicy(wire(50_000_000_001), ctx(server)))).toEqual(["ORDER_NOTIONAL_EXCEEDED"]);
+    // The user's own key is not capped.
+    expect(evalIntent(margin("1000000", "manual")).allowed).toBe(true);
+    expect(evaluatePolicy(wire(1_000_000_000_000), ctx()).allowed).toBe(true);
+  });
+
+  it("refuses topUpIsolatedOnlyMargin (no amount to cap) for automation keys only", () => {
+    const withTopUp = { ...policy, allowedActionTypes: [...policy.allowedActionTypes, "topUpIsolatedOnlyMargin"] as Policy["allowedActionTypes"] };
+    const topUp = { kind: "wire" as const, action: { type: "topUpIsolatedOnlyMargin", asset: 0, leverage: "0.5" }, expiresAfter: NOW + 1000, origin: "guardian" as const };
+    expect(codes(evaluatePolicy(topUp, ctx({ policy: { ...withTopUp, allowedOrigins: ["guardian"] } })))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(evaluatePolicy(topUp, ctx({ policy: withTopUp })).allowed).toBe(true);
+  });
+
   it("denies new entries while the daily loss lock is active, but allows reducing", () => {
     expect(codes(evalIntent(entry(), { lossLockActive: true }))).toEqual(["DAILY_LOSS_LOCKED"]);
     expect(evalIntent(entry({ reduceOnly: true, side: "sell", stopLoss: undefined }), { lossLockActive: true }).allowed).toBe(true);
