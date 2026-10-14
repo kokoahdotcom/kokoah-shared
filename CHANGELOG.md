@@ -88,6 +88,8 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   registry for every market. Such a market is now skipped like an unparseable name: it keeps its positional index, is
   untradeable, and is reported by `skippedEntries()` (new reason `invalid_margin`) and in `DexInfo.skippedMarkets`.
   With `strict: true` it throws `MarketRegistryError`.
+- `dailyLossLock`'s `DAILY_LOSS_LOCKED` alert says what the lock blocks: opening or adding to positions through Kokoah
+  until the daily reset, while closing and reducing still work (it said "new Kokoah orders are blocked").
 
 ## [0.1.3] - 2026-09-23
 
