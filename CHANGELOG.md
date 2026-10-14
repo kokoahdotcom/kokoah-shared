@@ -60,10 +60,11 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 - `evaluatePolicy`: spot orders are denied unless listed in `allowedSpotCoins` (before, a spot coin passed with
   `allowedCoins: "*"` when the registry had spot markets). Spot sells need the exact builder; spot buys must carry
   none. `setReferrer` with exactly the policy's `referralCode` is the one exception to the hard deny.
-- `evaluatePolicy`: an automation key (a policy whose `allowedOrigins` leaves out `manual`) adds at most
-  `maxOrderNotionalUsd` of isolated margin per `updateIsolatedMargin` (`ORDER_NOTIONAL_EXCEEDED` above it; before, any
-  amount), and may no longer sign `topUpIsolatedOnlyMargin`, whose target leverage has no amount to cap
-  (`ACTION_TYPE_NOT_ALLOWED`). Keys with manual trading are unchanged.
+- `evaluatePolicy`: automation (a policy whose `allowedOrigins` leaves out `manual`, or an action whose origin is not
+  `manual`) adds at most `maxOrderNotionalUsd` of isolated margin per `updateIsolatedMargin` (`ORDER_NOTIONAL_EXCEEDED`
+  above it; before, any amount), never removes it (before, only keys without manual trading were refused), and may no
+  longer sign `topUpIsolatedOnlyMargin`, whose target leverage has no amount to cap (`ACTION_TYPE_NOT_ALLOWED`). The
+  user's own (`manual`) margin changes are unchanged.
 - `evaluatePolicy`: a `scheduleCancel` more than `SCHEDULE_CANCEL_MAX_LEAD_MS` (1 h) ahead of `context.now` is
   `INVALID_SUBJECT`, so raw wire actions get the bound `compileAction` already applies.
 - `verifyPolicySignature`: a format-3 (agent mandate) signature verifies only when the policy and mandate pass
