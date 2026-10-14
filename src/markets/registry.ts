@@ -84,9 +84,10 @@ export interface MarketRegistryInput {
   displayOverrides?: Readonly<Record<string, Partial<MarketDisplay>>>;
   /**
    * When true, throw {@link MarketRegistryError} on any coin name that can't be parsed or doesn't match its dex
-   * (the 0.1.0 behaviour). Default false: such entries are skipped, keep their positional index (so every other
-   * market's asset id stays correct), are untradeable, and are reported by {@link MarketRegistry.skippedEntries}.
-   * Live HL testnet metadata contains names like `VOLMEX:$EVIV` and `tndex:A B:C`.
+   * (the 0.1.0 behaviour), and on any market whose margin data is invalid. Default false: such entries are skipped,
+   * keep their positional index (so every other market's asset id stays correct), are untradeable, and are reported
+   * by {@link MarketRegistry.skippedEntries}. Live HL testnet metadata contains names like `VOLMEX:$EVIV` and
+   * `tndex:A B:C`.
    */
   strict?: boolean;
 }
@@ -97,7 +98,8 @@ export interface SkippedMarketEntry {
   /** Position in the dex's `meta.universe`; the asset id `perpAssetIdForDex(dexIndex, index)` is reserved. */
   readonly index: number;
   readonly name: string;
-  readonly reason: "unparseable" | "unresolved_dex_name";
+  /** `invalid_margin`: a max leverage or margin tier ≤ 0, or an empty margin table. */
+  readonly reason: "unparseable" | "unresolved_dex_name" | "invalid_margin";
   readonly message: string;
 }
 
@@ -161,7 +163,7 @@ export interface DexInfo {
   readonly collateralToken?: number;
   readonly liveMarkets: number;
   readonly delistedMarkets: number;
-  /** Universe entries skipped because their names were unparseable or didn't match the dex (non-strict mode). */
+  /** Universe entries skipped: names unparseable or not matching the dex, or invalid margin data (non-strict mode). */
   readonly skippedMarkets: number;
 }
 
@@ -205,7 +207,7 @@ export class MarketRegistry {
   /**
    * Builds a registry from `/info` responses. Throws {@link MarketRegistryError} on structurally inconsistent
    * metadata (e.g. `perpDexs` and `allPerpMetas` of different lengths, which means they were fetched at different
-   * times). Individual bad coin names are skipped and reported unless `strict: true`.
+   * times). Individual bad entries (coin names, margin data) are skipped and reported unless `strict: true`.
    */
   static fromInfo(input: MarketRegistryInput): MarketRegistry {
     const reg = new MarketRegistry();
@@ -264,8 +266,16 @@ export class MarketRegistry {
           return;
         }
         if (!parsed) return; // unreachable: narrowed above
-        const marginTableId = u.marginTableId ?? u.maxLeverage;
-        const marginTiers = resolveMarginTiers(marginTableId, meta.marginTables ?? [], u.maxLeverage);
+        // One market's bad margin data (a tier or leverage ≤ 0, an empty table) makes only that market untradeable.
+        const margin = resolveEntryMargin(u, meta.marginTables ?? []);
+        if ("problem" in margin) {
+          const message = `Coin "${u.name}" at dex index ${dexIndex} has invalid margin data: ${margin.problem}`;
+          if (strict) throw new MarketRegistryError(message);
+          reg.skipped.push({ dexIndex, index, name: u.name, reason: "invalid_margin", message });
+          skipped++;
+          return;
+        }
+        const { marginTableId, marginTiers } = margin;
         const marginMode: MarketMarginMode =
           u.marginMode === "strictIsolated" ? "strictIsolated" : u.marginMode === "noCross" ? "noCross" : u.onlyIsolated ? "strictIsolated" : "cross";
         const symbol = parsed.symbol;
@@ -456,6 +466,20 @@ function resolveDexName(meta: PerpMetaLike, dex: PerpDexLike | undefined, dexInd
     throw new MarketRegistryError(`Cannot determine the name of dex ${dexIndex}`);
   }
   return name;
+}
+
+/** A perp's margin table id and tiers, or why its margin data can't be used. */
+function resolveEntryMargin(
+  u: PerpUniverseEntry,
+  marginTables: ReadonlyArray<readonly [number, RawMarginTable]>,
+): { marginTableId: number; marginTiers: MarginTier[] } | { problem: string } {
+  if (!(u.maxLeverage > 0)) return { problem: `maxLeverage must be positive, got ${u.maxLeverage}` };
+  const marginTableId = u.marginTableId ?? u.maxLeverage;
+  try {
+    return { marginTableId, marginTiers: resolveMarginTiers(marginTableId, marginTables, u.maxLeverage) };
+  } catch (e) {
+    return { problem: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 function resolveDisplay(

@@ -55,3 +55,39 @@ describe("MarketRegistry.fromInfo with unparseable coin names", () => {
     for (const m of r.list()) expect(r.validateCoin(m.coin).ok).toBe(true);
   });
 });
+
+describe("MarketRegistry.fromInfo with invalid margin data", () => {
+  const tiers = (...levs: number[]) => ({ description: "t", marginTiers: levs.map((maxLeverage, i) => ({ lowerBound: String(i * 1000), maxLeverage })) });
+  const allPerpMetas = [
+    { universe: [entry("BTC"), entry("ETH", { maxLeverage: 0 })], marginTables: [] },
+    {
+      universe: [entry("xyz:GOOD", { marginTableId: 60 }), entry("xyz:ZERO", { marginTableId: 61 }), entry("xyz:EMPTY", { marginTableId: 62 }), entry("xyz:NEG", { maxLeverage: -5 }), entry("xyz:OK")],
+      marginTables: [[60, tiers(20, 10)], [61, tiers(10, 0)], [62, tiers()]],
+    },
+  ] as unknown as PerpMetaLike[];
+  const perpDexs = [null, dex("xyz")] as unknown as PerpDexLike[];
+
+  it("skips only the bad markets and keeps every other market's positional asset id", () => {
+    const r = MarketRegistry.fromInfo({ allPerpMetas, perpDexs });
+    expect(r.require("BTC").assetId).toBe(0);
+    expect(r.require("xyz:GOOD")).toMatchObject({ assetId: perpAssetIdForDex(1, 0), marginTiers: [{ lowerBound: 0, maxLeverage: 20 }, { lowerBound: 1000, maxLeverage: 10 }] });
+    expect(r.require("xyz:OK").assetId).toBe(perpAssetIdForDex(1, 4));
+    expect(r.skippedEntries().map((s) => [s.dexIndex, s.index, s.name, s.reason])).toEqual([
+      [0, 1, "ETH", "invalid_margin"],
+      [1, 1, "xyz:ZERO", "invalid_margin"],
+      [1, 2, "xyz:EMPTY", "invalid_margin"],
+      [1, 3, "xyz:NEG", "invalid_margin"],
+    ]);
+    expect(r.skippedEntries()[1]?.message).toMatch(/^Coin "xyz:ZERO" at dex index 1 has invalid margin data: Invalid margin tier/);
+    for (const s of r.skippedEntries()) {
+      expect(r.getByAssetId(perpAssetIdForDex(s.dexIndex, s.index))).toBeUndefined();
+      expect(r.validateCoin(s.name).ok).toBe(false);
+    }
+    expect(r.dexes().map((d) => [d.name, d.liveMarkets, d.skippedMarkets])).toEqual([["", 1, 1], ["xyz", 2, 3]]);
+  });
+
+  it("throws in strict mode", () => {
+    expect(() => MarketRegistry.fromInfo({ allPerpMetas, perpDexs, strict: true })).toThrow(MarketRegistryError);
+    expect(() => MarketRegistry.fromInfo({ allPerpMetas: [allPerpMetas[0]!], strict: true })).toThrow(/"ETH" at dex index 0 has invalid margin data: maxLeverage must be positive/);
+  });
+});
