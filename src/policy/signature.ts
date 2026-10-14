@@ -594,7 +594,8 @@ export async function recoverPolicySigner(signed: SignedPolicy): Promise<`0x${st
  * typed-data format the authorization names (`typedDataVersion`; omitted: 1), so policies signed in either format verify
  * (EOA signatures; smart-contract wallets need ERC-1271 verification, not provided here). Returns false on any
  * mismatch or malformed input, and unless `ignoreExpiry` is set, when not `issuedAt ≤ now < expiresAt`
- * (`now` defaults to `Date.now()`).
+ * (`now` defaults to `Date.now()`). A format-3 agent mandate also has to pass {@link agentPolicyProblems}, however it
+ * was signed.
  */
 export async function verifyPolicySignature(
   signed: SignedPolicy,
@@ -613,6 +614,8 @@ export async function verifyPolicySignature(
     const now = options.now ?? Date.now();
     const skew = Math.max(0, options.clockSkewMs ?? 0);
     if (!options.ignoreExpiry && !(now + skew >= a.issuedAt && now < a.expiresAt)) return false;
+    // The agent card rules hold for any format-3 signature, not only one started with prepareAgentPolicySignature.
+    if (policyTypedDataVersion(a) === 3 && (!a.agentMandate || agentPolicyProblems(signed.policy, a.agentMandate).length > 0)) return false;
     const signer = await recoverPolicySigner(signed);
     return signer.toLowerCase() === a.user.toLowerCase();
   } catch {
