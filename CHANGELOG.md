@@ -94,6 +94,8 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   With `strict: true` it throws `MarketRegistryError`.
 - `dailyLossLock`'s `DAILY_LOSS_LOCKED` alert says what the lock blocks: opening or adding to positions through Kokoah
   until the daily reset, while closing and reducing still work (it said "new Kokoah orders are blocked").
+- `sendOpsBatch`: the plain notice that replaces a message the receiver refused scrubs its titles with `scrubOpsText`,
+  like the embeds it stands in for (they went out unscrubbed).
 
 ## [0.1.3] - 2026-09-23
 

@@ -277,6 +277,15 @@ describe("webhooks", () => {
       username: "Kokoah alerts",
       allowed_mentions: { parse: [] },
     });
+    // The plain notice is scrubbed like the embeds it replaces.
+    bodies.length = 0;
+    n = 0;
+    const leaky = alert(2, { title: `export failed for ${ADDRESS} with api_key=abc123def` });
+    const problem = { kind: "problem" as const, subject: "mail relay smtp://ops:hunter2@mail.internal down", detail: "x" };
+    await sendOpsBatch(DISCORD, { alerts: [leaky], problems: [problem] }, { label: "x", fetchFn: fetchFn as typeof fetch });
+    expect(JSON.parse(bodies[1]!).content).toBe(
+      "Kokoah x: 2 alert(s) could not be formatted (50035 Invalid Form Body):\n- mail relay smtp://［credentials］＠mail.internal down\n- error: export failed for 0x［address］ with api_key=［redacted］",
+    );
     const failing = async () => new Response(null, { status: 503 });
     expect(await sendOpsBatch(DISCORD, { alerts: Array.from({ length: 25 }, (_, i) => alert(i)) }, { label: "x", fetchFn: failing as typeof fetch })).toEqual({
       ok: false,

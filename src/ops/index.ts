@@ -660,7 +660,7 @@ export async function sendOpsBatch(
         ...m.alerts.map((i) => `${batch.alerts![i]!.severity}: ${batch.alerts![i]!.title}`),
         ...(m.note ? ["(a note with more events)"] : []),
       ];
-      const text = cut(`Kokoah ${o.label}: ${titles.length} alert(s) could not be formatted (${r.reason}):\n- ${titles.map((t) => plain(t, 150)).join("\n- ")}`, 1900);
+      const text = cut(`Kokoah ${o.label}: ${titles.length} alert(s) could not be formatted (${r.reason}):\n- ${titles.map((t) => plain(scrubOpsText(t), 150)).join("\n- ")}`, 1900);
       const retry = await postOpsWebhook(url, kind.kind === "discord" ? { content: text, username: "Kokoah alerts", allowed_mentions: { parse: [] } } : { text }, o.fetchFn);
       if (retry.ok || "badPayload" in retry) {
         // Posted in plain form, or refused in that form too: either way this message is done with.
