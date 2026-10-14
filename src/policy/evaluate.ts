@@ -8,7 +8,8 @@
  *    when the policy says `botEntriesWithoutStopLoss`), orders per minute, isolated margin (automation keys only add it,
  *    at most `maxOrderNotionalUsd` at a time),
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
- *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock;
+ *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
+ *    `scheduleCancel` at most 1 h ahead;
  * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain order (IOC, or with
  *    `spotTrading` also GTC and post-only limits within the bands), with the builder on sells and none on buys
  *    (Hyperliquid charges builder fees on spot sells only). Spot legs are exempt from the leverage, stop-loss and
@@ -19,7 +20,7 @@
  *
  * @module
  */
-import type { CompiledAction } from "../actions/compile.js";
+import { type CompiledAction, SCHEDULE_CANCEL_MAX_LEAD_MS } from "../actions/compile.js";
 import type { ActionIntent, IntentOrigin } from "../intents/index.js";
 import { decodeAssetId, parseCoin } from "../markets/assetIds.js";
 import type { MarketRegistry } from "../markets/registry.js";
@@ -254,6 +255,15 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
       // "a: true" (always place) places the new order even when nothing was cancelled — an order without a builder.
       if (policy.requiredBuilder && wire?.a === true) add("BUILDER_REQUIRED", "Always-place modifies would place orders without the Kokoah builder code.");
       break;
+    case "scheduleCancel": {
+      // It cancels every open order, the user's own stops included: no further out than `compileAction` allows, also for
+      // a raw wire action.
+      const time = wire ? wire.time : intent?.kind === "scheduleCancel" ? intent.time : undefined;
+      if (typeof time === "number" && time > context.now + SCHEDULE_CANCEL_MAX_LEAD_MS) {
+        add("INVALID_SUBJECT", "scheduleCancel time must be at most 1 hour in the future.");
+      }
+      break;
+    }
     case "setReferrer":
       if (wire?.code !== policy.referralCode) add("REFERRER_ACTION_DENIED", "Only Kokoah's own referral code can be set.");
       if (vaultAddress !== undefined) add("REFERRER_ACTION_DENIED", "A referrer can only be set for the main account.");
