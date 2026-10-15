@@ -8,7 +8,7 @@
 import type { BotLimitNeeds } from "../policy/bots.js";
 import { gridPrices } from "./grid.js";
 import { dcaSafetyLadder } from "./dca.js";
-import { BOT_LIMITS, type BotConfig, botCoins } from "./schema.js";
+import { BOT_LIMITS, type BotConfig, botCoins, indicatorSignalConfig } from "./schema.js";
 
 const SLIP = 1 + BOT_LIMITS.marketSlippagePct / 100;
 /** Size rounding up to the market's decimals can add a little; 1% covers it. */
@@ -20,7 +20,7 @@ const up = (x: number) => Math.ceil(x);
 export function botLimitNeeds(config: BotConfig, vaultAddress?: string): BotLimitNeeds {
   const base = {
     coins: botCoins(config),
-    maxLeverage: config.maxLeverage,
+    maxLeverage: config.maxLeverage ?? 1,
     entriesWithoutStopLoss: true,
     marketSlippagePct: BOT_LIMITS.marketSlippagePct,
     ...(vaultAddress ? { vaultAddresses: [vaultAddress.toLowerCase()] } : {}),
@@ -66,5 +66,16 @@ export function botLimitNeeds(config: BotConfig, vaultAddress?: string): BotLimi
         dailyNotionalUsd: up(config.maxPositionUsd * 4 * SLIP),
         ordersPerMinute: 10,
       };
+    case "indicator": {
+      // Trades as a signal bot; one that only alerts needs nothing (and is never checked against the limits).
+      const signal = indicatorSignalConfig(config);
+      if (!signal) return { ...base, maxLeverage: 1, maxOrderNotionalUsd: 0, dailyNotionalUsd: 0, ordersPerMinute: 0 };
+      return {
+        ...base,
+        maxOrderNotionalUsd: up(signal.maxOrderUsd * SLIP),
+        dailyNotionalUsd: up(signal.maxPositionUsd * 4 * SLIP),
+        ordersPerMinute: 10,
+      };
+    }
   }
 }

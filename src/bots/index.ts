@@ -1,5 +1,5 @@
 /**
- * Bots (Pro): grid, DCA, copy trading and TradingView signals. Schemas, pure planners and the limits a bot needs. The
+ * Bots (Pro): grid, DCA, copy trading, TradingView signals and indicator signals. Schemas, pure planners and the limits a bot needs. The
  * backend runs them through the `kokoah-bot` automation key; every order passes the signed policy and carries the
  * Kokoah builder fee.
  *
@@ -15,3 +15,5 @@ export * from "./ledger.js";
 export * from "./needs.js";
 export * from "./backtest.js";
 export * from "./copyBacktest.js";
+export * from "./indicatorRules.js";
+export * from "./indicatorBacktest.js";
