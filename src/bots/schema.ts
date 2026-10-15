@@ -10,6 +10,8 @@
  *   on the average entry.
  * - `copy`: mirrors a leaderboard trader's position changes (seen by the follow poller) into the user's account.
  * - `signal`: turns TradingView (or other) webhook alerts into orders.
+ * - `indicator`: reads the chart's indicators at every candle close (`indicatorRules.ts`) and alerts the user, trades
+ *   like a signal bot, or both.
  *
  * All schemas are strict (unknown keys are rejected) except the webhook alert, which ignores extra fields so alert
  * templates may carry notes.
@@ -19,8 +21,9 @@
 import * as v from "valibot";
 import { AddressSchema, CoinSchema } from "../intents/index.js";
 import { MIN_ORDER_NOTIONAL_USD } from "../precision/index.js";
+import { INDICATOR_TIMEFRAMES, indicatorRuleProblems, RulesSchema } from "./indicatorRules.js";
 
-export const BOT_KINDS = ["grid", "dca", "copy", "signal"] as const;
+export const BOT_KINDS = ["grid", "dca", "copy", "signal", "indicator"] as const;
 export type BotKind = (typeof BOT_KINDS)[number];
 
 /** Bounds shared by the forms, the API and the planners. */
@@ -271,11 +274,59 @@ export const SignalAlertSchema = v.object({
 export type SignalAlert = v.InferOutput<typeof SignalAlertSchema>;
 
 // ---------------------------------------------------------------------------------------------
+// Indicator signals (read at every candle close)
+// ---------------------------------------------------------------------------------------------
+
+/** `alert`: tells the user, trades nothing; `trade`: trades like a signal bot; `both`: trades and tells the user. */
+export const INDICATOR_MODES = ["alert", "trade", "both"] as const;
+export type IndicatorMode = (typeof INDICATOR_MODES)[number];
+
+const IndicatorObject = v.strictObject({
+  kind: v.literal("indicator"),
+  coin: CoinSchema,
+  timeframe: v.picklist(INDICATOR_TIMEFRAMES),
+  mode: v.picklist(INDICATOR_MODES),
+  rules: RulesSchema,
+  /** Trading (mode `trade` or `both`), as a signal bot: the value of each order (USD). */
+  orderSizeUsd: v.optional(Usd(BOT_LIMITS.maxOrderUsd)),
+  maxOrderUsd: v.optional(Usd(BOT_LIMITS.maxOrderUsd)),
+  maxPositionUsd: v.optional(Usd(BOT_LIMITS.maxTotalUsd)),
+  maxLeverage: v.optional(Leverage),
+  direction: v.optional(v.picklist(SIGNAL_DIRECTIONS), "both"),
+});
+export type IndicatorBotConfig = v.InferOutput<typeof IndicatorObject>;
+
+/** Whether a bot trades (everything but an indicator bot that only alerts). */
+export const botTrades = (c: BotConfig): boolean => c.kind !== "indicator" || c.mode !== "alert";
+
+/** The signal-bot settings an indicator bot trades with (null when it only alerts or misses one). */
+export function indicatorSignalConfig(c: IndicatorBotConfig): SignalBotConfig | null {
+  if (c.mode === "alert" || c.orderSizeUsd === undefined || c.maxOrderUsd === undefined || c.maxPositionUsd === undefined || c.maxLeverage === undefined) return null;
+  return { kind: "signal", coin: c.coin, orderSizeUsd: c.orderSizeUsd, maxOrderUsd: c.maxOrderUsd, maxPositionUsd: c.maxPositionUsd, maxLeverage: c.maxLeverage, direction: c.direction, requireHmac: false };
+}
+
+export function indicatorConfigProblems(c: IndicatorBotConfig): string[] {
+  const p = indicatorRuleProblems(c.rules, c.timeframe);
+  if (c.mode === "alert") return p;
+  const missing = (["orderSizeUsd", "maxOrderUsd", "maxPositionUsd", "maxLeverage"] as const).filter((k) => c[k] === undefined);
+  if (missing.length) p.push(`A bot that trades needs ${missing.join(", ")}.`);
+  else p.push(...signalConfigProblems({ orderSizeUsd: c.orderSizeUsd!, maxOrderUsd: c.maxOrderUsd!, maxPositionUsd: c.maxPositionUsd! }));
+  return p;
+}
+
+export const IndicatorBotConfigSchema = v.pipe(
+  IndicatorObject,
+  v.rawCheck(({ dataset, addIssue }) => {
+    if (dataset.typed) for (const message of indicatorConfigProblems(dataset.value)) addIssue({ message });
+  }),
+);
+
+// ---------------------------------------------------------------------------------------------
 // Any bot
 // ---------------------------------------------------------------------------------------------
 
-export const BotConfigSchema = v.variant("kind", [GridBotConfigSchema, DcaBotConfigSchema, CopyBotConfigSchema, SignalBotConfigSchema]);
-export type BotConfig = GridBotConfig | DcaBotConfig | CopyBotConfig | SignalBotConfig;
+export const BotConfigSchema = v.variant("kind", [GridBotConfigSchema, DcaBotConfigSchema, CopyBotConfigSchema, SignalBotConfigSchema, IndicatorBotConfigSchema]);
+export type BotConfig = GridBotConfig | DcaBotConfig | CopyBotConfig | SignalBotConfig | IndicatorBotConfig;
 export type BotConfigInput = v.InferInput<typeof BotConfigSchema>;
 
 /** Thrown by {@link parseBotConfig}. */
@@ -295,8 +346,9 @@ export function parseBotConfig(input: unknown): BotConfig {
   return r.output as BotConfig;
 }
 
-/** The markets a bot trades: its one coin, or a copy bot's allow list ("*" when it may copy any market). */
+/** The markets a bot trades: its one coin, or a copy bot's allow list ("*" when it may copy any market); none for alerts. */
 export function botCoins(c: BotConfig): "*" | string[] {
   if (c.kind === "copy") return c.allowCoins && c.allowCoins.length > 0 ? [...c.allowCoins] : "*";
+  if (!botTrades(c)) return [];
   return [c.coin];
 }
