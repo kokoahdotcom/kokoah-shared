@@ -87,6 +87,11 @@
       "import": "./dist/subaccounts/index.js",
       "default": "./dist/subaccounts/index.js"
     },
+    "./indicators": {
+      "types": "./dist/indicators/index.d.ts",
+      "import": "./dist/indicators/index.js",
+      "default": "./dist/indicators/index.js"
+    },
     "./bots": {
       "types": "./dist/bots/index.d.ts",
       "import": "./dist/bots/index.js",
