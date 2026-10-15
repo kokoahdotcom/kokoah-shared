@@ -407,7 +407,9 @@ describe("signal", () => {
     const p = planSignal({ ...base, config: config(), alert: alert({ action: "buy" }) });
     expect(p).toMatchObject({ ok: true, order: { side: "buy", size: "0.001", type: "market", reduceOnly: false } });
     const capped = planSignal({ ...base, config: config(), alert: alert({ action: "sell", sizeUsd: 5000 }) });
-    expect(capped).toMatchObject({ ok: true, order: { side: "sell", size: "0.005" } });
+    expect(capped).toMatchObject({ ok: true, order: { side: "sell", size: "0.005" }, note: "Selling 0.005 BTC (capped by the bot's limits)." });
+    // Rounding down to the market's size decimals is not a cap.
+    expect(planSignal({ ...base, config: config(), alert: alert({ action: "buy", sizeUsd: 109.5 }) })).toMatchObject({ ok: true, note: "Buying 0.00109 BTC." });
     // Position cap: long 0.009 ($900) and cap $1,000 → at most $100 more.
     const full = planSignal({ ...base, position: 0.009, accountPosition: 0.009, config: config(), alert: alert({ action: "buy", sizeUsd: 400 }) });
     expect(full).toMatchObject({ ok: true, order: { size: "0.001" } });
