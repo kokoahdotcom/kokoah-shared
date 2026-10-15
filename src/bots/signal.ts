@@ -133,7 +133,8 @@ export function planSignal(input: SignalPlanInput): SignalPlan {
   if (!(Number(text) > 0) || !meetsMinimum(text, px)) {
     return { ok: false, reason: `After the bot's caps (per order, position ${fmt(c.maxPositionUsd)}, leverage ${c.maxLeverage}×) the order is below Hyperliquid's $${MIN_ORDER_NOTIONAL_USD} minimum.` };
   }
-  const capped = Number(text) < wanted * 0.999;
+  // Capped by the caps, not by rounding to the market's size decimals.
+  const capped = size < wanted * (1 - 1e-9);
   return {
     ok: true,
     order: { ...base, side, size: text, type: price ? "limit" : "market", ...(price ? { price } : {}), reduceOnly: false, label: `Signal ${side}` },
