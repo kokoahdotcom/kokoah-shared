@@ -279,6 +279,17 @@ export function fundingCost(input: { side: PositionSide; size: number; oraclePri
 /** HL applies up to 10% slippage tolerance to market TP/SL orders. */
 export const MARKET_TRIGGER_MAX_SLIPPAGE_PCT = 10;
 
+/**
+ * The smallest distance, in percent of the price, between a stop loss and the price it is measured from (the mark, or
+ * the worse of the estimated entry and the mark for a new order). Hyperliquid sets no minimum; Kokoah keeps one so a
+ * market's ordinary noise can't fire a stop right away. It follows the market's top leverage, which Hyperliquid sets
+ * from the market's depth: 40× and up (BTC) 0.1%, 20×–39× (ETH, SOL) 0.2%, 10×–19× 0.3%, anything else 0.5%.
+ */
+export function minStopDistancePct(maxLeverage: number): number {
+  if (!(maxLeverage >= 10)) return 0.5;
+  return maxLeverage >= 40 ? 0.1 : maxLeverage >= 20 ? 0.2 : 0.3;
+}
+
 /** Result of {@link maxLossAtStop}. */
 export interface StopLossEstimate {
   /** Assumed worst exit price (stop price adjusted by the slippage allowance for market stops). */
