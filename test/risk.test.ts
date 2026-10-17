@@ -13,6 +13,7 @@ import {
   liquidationPrice,
   liquidationPriceFromMarginAvailable,
   maintenanceMargin,
+  minStopDistancePct,
   maintenanceMarginRate,
   maintenanceSchedule,
   marginTiersFromTable,
@@ -424,5 +425,13 @@ describe("assessOrderRisk", () => {
     expect(() => assessOrderRisk({ ...base, size: 0 })).toThrow(RangeError);
     expect(() => assessOrderRisk({ ...base, markPrice: 0 })).toThrow(RangeError);
     expect(() => assessOrderRisk({ ...base, leverage: 0 })).toThrow(RangeError);
+  });
+});
+
+describe("minStopDistancePct", () => {
+  it("is tighter on deeper markets, by Hyperliquid's top leverage", () => {
+    expect([50, 40, 25, 20, 10, 5, 3].map(minStopDistancePct)).toEqual([0.1, 0.1, 0.2, 0.2, 0.3, 0.5, 0.5]);
+    expect(minStopDistancePct(Number.NaN)).toBe(0.5);
+    expect(minStopDistancePct(0)).toBe(0.5);
   });
 });
