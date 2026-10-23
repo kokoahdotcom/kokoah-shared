@@ -277,6 +277,22 @@ describe("order limits", () => {
     expect(codes(evaluatePolicy(wire(60_000_000_000), ctx()))).toEqual(["ORDER_NOTIONAL_EXCEEDED"]);
   });
 
+  it("counts the isolated margin automation adds toward the daily notional and the per-minute rate", () => {
+    const margin = (amountUsd: string, origin: string) => ({ kind: "updateIsolatedMargin", coin: "BTC", amountUsd, origin }) as ActionIntentInput;
+    const server = { policy: { ...policy, allowedOrigins: ["guardian"] as Policy["allowedOrigins"] } };
+    // $200,000 a day: $150,000 used leaves room for $50,000, not a cent more.
+    expect(evalIntent(margin("50000", "guardian"), { ...server, dailyNotionalUsedUsd: 150_000 }).allowed).toBe(true);
+    expect(codes(evalIntent(margin("50000", "guardian"), { ...server, dailyNotionalUsedUsd: 150_001 }))).toEqual(["DAILY_NOTIONAL_EXCEEDED"]);
+    // 10 a minute: an addition is one more.
+    expect(evalIntent(margin("50", "guardian"), { ...server, ordersInLastMinute: 9 }).allowed).toBe(true);
+    expect(codes(evalIntent(margin("50", "guardian"), { ...server, ordersInLastMinute: 10 }))).toEqual(["ORDER_RATE_EXCEEDED"]);
+    const wire = { kind: "wire" as const, action: { type: "updateIsolatedMargin", asset: 0, isBuy: true, ntli: 60_000_000 }, expiresAfter: NOW + 1000, origin: "guardian" as const };
+    expect(codes(evaluatePolicy(wire, ctx({ ...server, dailyNotionalUsedUsd: 199_950 })))).toEqual(["DAILY_NOTIONAL_EXCEEDED"]);
+    expect(codes(evaluatePolicy(wire, ctx({ ...server, ordersInLastMinute: 10 })))).toEqual(["ORDER_RATE_EXCEEDED"]);
+    // The user's own hand: neither.
+    expect(evalIntent(margin("50000", "manual"), { dailyNotionalUsedUsd: 199_999, ordersInLastMinute: 10 }).allowed).toBe(true);
+  });
+
   it("refuses topUpIsolatedOnlyMargin (no amount to cap) for automation only", () => {
     const withTopUp = { ...policy, allowedActionTypes: [...policy.allowedActionTypes, "topUpIsolatedOnlyMargin"] as Policy["allowedActionTypes"] };
     const topUp = { kind: "wire" as const, action: { type: "topUpIsolatedOnlyMargin", asset: 0, leverage: "0.5" }, expiresAfter: NOW + 1000, origin: "guardian" as const };

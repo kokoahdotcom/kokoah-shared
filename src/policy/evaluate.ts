@@ -6,7 +6,7 @@
  * 2. anything not in the policy's allow-list is denied;
  * 3. per-action limits: coins, notional, daily notional, leverage, stop-loss requirement (origin `bot` is exempt only
  *    when the policy says `botEntriesWithoutStopLoss`), orders per minute, isolated margin (automation only adds it, at
- *    most `maxOrderNotionalUsd` at a time),
+ *    most `maxOrderNotionalUsd` at a time, counted toward the daily notional and the per-minute rate),
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
  *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
  *    `scheduleCancel` at most 1 h ahead;
@@ -238,6 +238,14 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
           add("ACTION_TYPE_NOT_ALLOWED", "Automation may add margin to an isolated position, not remove it.");
         } else if (!(amountUsd <= policy.maxOrderNotionalUsd)) {
           add("ORDER_NOTIONAL_EXCEEDED", `Adding $${fmt(amountUsd)} of margin at once is above the $${fmt(policy.maxOrderNotionalUsd)} order limit.`);
+        }
+        // Each addition also counts like an order toward the daily notional and the per-minute rate, so automation can't
+        // move the account's cross collateral into one position faster or further than it may trade.
+        if (amountUsd > 0) {
+          if (!(context.dailyNotionalUsedUsd + amountUsd <= policy.maxDailyNotionalUsd)) {
+            add("DAILY_NOTIONAL_EXCEEDED", `Daily notional would reach $${fmt(context.dailyNotionalUsedUsd + amountUsd)}, above the $${fmt(policy.maxDailyNotionalUsd)} limit.`);
+          }
+          if (!(context.ordersInLastMinute + 1 <= policy.maxOrdersPerMinute)) add("ORDER_RATE_EXCEEDED", `More than ${policy.maxOrdersPerMinute} orders per minute.`);
         }
       }
       break;
