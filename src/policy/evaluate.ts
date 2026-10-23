@@ -10,7 +10,7 @@
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
  *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
  *    `scheduleCancel` at most 1 h ahead, and (with `requireStopCoverage`) no cancel or modify that leaves a position's
- *    required stop-loss behind;
+ *    required stop-loss behind, and no `scheduleCancel` set at all;
  * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain order (IOC, or with
  *    `spotTrading` also GTC and post-only limits within the bands), with the builder on sells and none on buys
  *    (Hyperliquid charges builder fees on spot sells only). Spot legs are exempt from the leverage, stop-loss and
@@ -93,7 +93,8 @@ export interface PolicyContext {
   /**
    * With `policy.requireStopLossForNewEntries`, cancels and modifies (the exact wire action) must not leave a position
    * that had a stop-loss without one (`stopCoverage.ts`), checked against `accountBook`; without it they are
-   * `STOP_LOSS_REQUIRED`. For signers that read the traded account's positions and orders themselves (the signer
+   * `STOP_LOSS_REQUIRED`, and so is setting a `scheduleCancel` (it would cancel every stop-loss when it fires; clearing
+   * one stays allowed). For signers that read the traded account's positions and orders themselves (the signer
    * service); others leave it unset. Origin `bot` is exempt when the policy says `botEntriesWithoutStopLoss`.
    */
   requireStopCoverage?: boolean;
@@ -296,9 +297,15 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
       break;
   }
 
-  // Stops required: a cancel or modify must not take a position's stop-loss away afterwards.
+  // Stops required: a cancel or modify must not take a position's stop-loss away afterwards, and a dead man's switch
+  // (which cancels every open order, stop-losses included, when it fires) is never set; clearing one is fine.
   const botExempt = origin === "bot" && policy.botEntriesWithoutStopLoss === true;
-  if (context.requireStopCoverage === true && policy.requireStopLossForNewEntries && !botExempt && wire !== undefined && STOP_COVERAGE_ACTION_TYPES.includes(actionType)) {
+  const stopsGuarded = context.requireStopCoverage === true && policy.requireStopLossForNewEntries && !botExempt;
+  if (stopsGuarded && actionType === "scheduleCancel") {
+    const time = wire ? wire.time : intent?.kind === "scheduleCancel" ? intent.time : undefined;
+    if (time !== undefined && time !== null) add("STOP_LOSS_REQUIRED", "A scheduled cancel-all would also cancel the stop-losses this policy requires.");
+  }
+  if (stopsGuarded && wire !== undefined && STOP_COVERAGE_ACTION_TYPES.includes(actionType)) {
     if (!context.accountBook || !context.registry) {
       add("STOP_LOSS_REQUIRED", "The account's open positions and stop-losses could not be checked, so no order is cancelled or changed.");
     } else {
