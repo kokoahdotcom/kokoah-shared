@@ -17,6 +17,7 @@ import {
   sizeStep,
   validateOrderNotional,
 } from "../src/precision/index.js";
+import { decToString, normalize } from "../src/precision/decimal.js";
 
 describe("isValidPrice — HL tick-and-lot-size doc examples", () => {
   it.each([
@@ -256,5 +257,32 @@ describe("normalizeDecimal", () => {
   });
   it("rejects garbage", () => {
     for (const bad of ["", ".", "1.2.3", "0x10", "1,5", " ", "NaN"]) expect(() => normalizeDecimal(bad)).toThrow(PrecisionError);
+  });
+  it("refuses over-long decimals at once, without echoing them, and keeps 40 characters", () => {
+    // A 250 KB "1.000…" from a caller used to take seconds of BigInt work before it was even checked.
+    const long = `1.${"0".repeat(250_000)}`;
+    const start = Date.now();
+    expect(() => normalizeDecimal(long)).toThrow(/at most 40 characters/);
+    expect(() => normalizeDecimal(long)).toThrow(PrecisionError);
+    expect(Date.now() - start).toBeLessThan(500);
+    let message = "";
+    try {
+      normalizeDecimal(long);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message.length).toBeLessThan(200);
+    expect(normalizeDecimal(`1.${"0".repeat(38)}`)).toBe("1");
+    expect(normalizeDecimal(`0.${"0".repeat(37)}1`)).toBe(`0.${"0".repeat(37)}1`);
+    expect(() => normalizeDecimal(`1.${"0".repeat(39)}`)).toThrow(PrecisionError);
+  });
+  it("strips many trailing zeros of a computed value quickly", () => {
+    const start = Date.now();
+    expect(normalizeDecimal("1e1000")).toBe(`1${"0".repeat(1000)}`);
+    // 10^20000 at scale 20000 (the shape of a sum across scales): exactly 1.
+    expect(decToString(normalize({ m: 10n ** 20_000n, s: 20_000 }))).toBe("1");
+    expect(normalize({ m: -(10n ** 5n) * 7n, s: 3 })).toEqual({ m: -700n, s: 0 });
+    expect(normalize({ m: 1200n, s: 1 })).toEqual({ m: 120n, s: 0 });
+    expect(Date.now() - start).toBeLessThan(1_000);
   });
 });
