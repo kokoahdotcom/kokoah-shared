@@ -113,6 +113,18 @@ describe("stop coverage (stops required)", () => {
     expect(codes(check(cancel(11, "BTC", "bot"), { policy: { ...bots, botEntriesWithoutStopLoss: false } }))).toEqual(["STOP_LOSS_REQUIRED"]);
   });
 
+  it("refuses a dead man's switch, which would cancel every stop-loss at once, but lets one be cleared", () => {
+    const withSchedule: Policy = { ...policy, allowedActionTypes: [...policy.allowedActionTypes, "scheduleCancel"] };
+    const schedule = (time?: number): ActionIntentInput => ({ kind: "scheduleCancel", ...(time !== undefined ? { time } : {}), origin: "guardian" }) as ActionIntentInput;
+    const d = check(schedule(NOW + 60_000), { policy: withSchedule });
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(evaluatePolicy({ kind: "wire", action: { type: "scheduleCancel", time: NOW + 60_000 }, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ policy: withSchedule })).allowed).toBe(false);
+    expect(check(schedule(), { policy: withSchedule }).allowed).toBe(true);
+    // Where stops aren't required, or for a caller that doesn't ask, nothing changes.
+    expect(check(schedule(NOW + 60_000), { policy: { ...withSchedule, requireStopLossForNewEntries: false } }).allowed).toBe(true);
+    expect(check(schedule(NOW + 60_000), { policy: withSchedule, requireStopCoverage: undefined }).allowed).toBe(true);
+  });
+
   it("without a distance limit, any stop-loss on the closing side counts", () => {
     const anyDistance: Policy = { ...policy, maxStopLossDistancePct: undefined };
     const far = book({ orders: [{ ...stop, triggerPrice: 60_000 }] });

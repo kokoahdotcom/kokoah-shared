@@ -12,7 +12,9 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   exact wire action) that would leave a position that had a stop-loss without one is `STOP_LOSS_REQUIRED`, and so is
   any cancel or modify when `accountBook` is missing. Covered: stop-loss triggers on the closing side, reduce-only or a
   position TP/SL, covering the whole size, within `maxStopLossDistancePct` of the entry on the losing side when set.
-  Origin `bot` is exempt with `botEntriesWithoutStopLoss`. `stopCoverageProblems`, `positionCovered`, `AccountBook`,
+  Origin `bot` is exempt with `botEntriesWithoutStopLoss`. Setting a `scheduleCancel` (a dead man's switch, which
+  cancels every open order when it fires) is `STOP_LOSS_REQUIRED` there too; clearing one is allowed.
+  `stopCoverageProblems`, `positionCovered`, `AccountBook`,
   `AccountOrder`, `AccountPosition`, `STOP_COVERAGE_ACTION_TYPES`. Callers that don't set it keep the old behaviour.
 - `bots`: `backtestCopy` runs a copy bot over a trader's past fills with the server's own `copyStep` (positions rebuilt
   from the fills, seen once per poll; copy orders at the latest price with 10 bps slippage and the taker fee; funding at
