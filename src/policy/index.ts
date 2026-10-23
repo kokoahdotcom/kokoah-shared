@@ -17,3 +17,4 @@ export * from "./perpDexs.js";
 export * from "./bots.js";
 export * from "./origins.js";
 export * from "./dailyLoss.js";
+export * from "./stopCoverage.js";

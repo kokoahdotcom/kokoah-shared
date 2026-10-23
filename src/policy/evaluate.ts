@@ -9,7 +9,8 @@
  *    most `maxOrderNotionalUsd` at a time, counted toward the daily notional and the per-minute rate),
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
  *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
- *    `scheduleCancel` at most 1 h ahead;
+ *    `scheduleCancel` at most 1 h ahead, and (with `requireStopCoverage`) no cancel or modify that leaves a position's
+ *    required stop-loss behind;
  * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain order (IOC, or with
  *    `spotTrading` also GTC and post-only limits within the bands), with the builder on sells and none on buys
  *    (Hyperliquid charges builder fees on spot sells only). Spot legs are exempt from the leverage, stop-loss and
@@ -26,6 +27,7 @@ import { decodeAssetId, parseCoin } from "../markets/assetIds.js";
 import type { MarketRegistry } from "../markets/registry.js";
 import { checkLimitPriceBand, checkTriggerPriceBand, type LimitTif, triggerLimitBandProblem } from "./band.js";
 import type { Policy } from "./schema.js";
+import { type AccountBook, STOP_COVERAGE_ACTION_TYPES, stopCoverageProblems } from "./stopCoverage.js";
 import { DENIED_ACTION_TYPES, DENIED_MESSAGES, type PolicyViolationCode } from "./types.js";
 import { isAddress, wireActionProblems } from "./wire.js";
 
@@ -88,6 +90,15 @@ export interface PolicyContext {
   hasStopLoss?: (coin: string) => boolean;
   /** Current leverage setting per coin, when known. */
   leverageByCoin?: Readonly<Record<string, number>>;
+  /**
+   * With `policy.requireStopLossForNewEntries`, cancels and modifies (the exact wire action) must not leave a position
+   * that had a stop-loss without one (`stopCoverage.ts`), checked against `accountBook`; without it they are
+   * `STOP_LOSS_REQUIRED`. For signers that read the traded account's positions and orders themselves (the signer
+   * service); others leave it unset. Origin `bot` is exempt when the policy says `botEntriesWithoutStopLoss`.
+   */
+  requireStopCoverage?: boolean;
+  /** The traded account's positions and resting orders on the markets the action touches, read by the signer itself. */
+  accountBook?: AccountBook;
   /**
    * Every perp entry leg (not reduce-only) must have its coin in `leverageByCoin`: a missing one is `LEVERAGE_EXCEEDED`
    * instead of a leg whose leverage goes unchecked. For signers that read the account's leverage themselves (the signer
@@ -283,6 +294,16 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
       break;
     default:
       break;
+  }
+
+  // Stops required: a cancel or modify must not take a position's stop-loss away afterwards.
+  const botExempt = origin === "bot" && policy.botEntriesWithoutStopLoss === true;
+  if (context.requireStopCoverage === true && policy.requireStopLossForNewEntries && !botExempt && wire !== undefined && STOP_COVERAGE_ACTION_TYPES.includes(actionType)) {
+    if (!context.accountBook || !context.registry) {
+      add("STOP_LOSS_REQUIRED", "The account's open positions and stop-losses could not be checked, so no order is cancelled or changed.");
+    } else {
+      for (const p of stopCoverageProblems({ action: wire, book: context.accountBook, registry: context.registry, maxStopLossDistancePct: policy.maxStopLossDistancePct })) add("STOP_LOSS_REQUIRED", p);
+    }
   }
 
   const legs = collectOrderLegs(intent, wire, context, add);
