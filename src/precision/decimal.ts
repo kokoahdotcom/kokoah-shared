@@ -29,12 +29,19 @@ export type RoundingDirection = "nearest" | "up" | "down";
 const DECIMAL_RE = /^([+-])?(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/;
 
 /**
+ * Longest decimal string {@link parseDec} accepts. Hyperliquid's prices and sizes are far shorter; longer input (a
+ * caller's 250 KB `"1.000…"`) would only cost BigInt work that grows with the square of its length.
+ */
+export const MAX_DECIMAL_LENGTH = 40;
+
+/**
  * Parses a number or decimal string into an exact decimal.
  *
  * Numbers are first reduced to 15 significant digits, the precision a float64 reliably carries,
- * so float noise such as `3.3000000000000003` becomes `3.3`. Strings are parsed exactly.
+ * so float noise such as `3.3000000000000003` becomes `3.3`. Strings are parsed exactly, up to
+ * {@link MAX_DECIMAL_LENGTH} characters.
  *
- * @throws {PrecisionError} on empty, malformed or non-finite input.
+ * @throws {PrecisionError} on empty, malformed, over-long or non-finite input.
  */
 export function parseDec(input: number | string): Dec {
   let text: string;
@@ -43,13 +50,15 @@ export function parseDec(input: number | string): Dec {
     text = input === 0 ? "0" : input.toPrecision(15);
   } else if (typeof input === "string") {
     text = input.trim();
+    // Checked before any parsing, and never echoed: the input may be huge.
+    if (text.length > MAX_DECIMAL_LENGTH) throw new PrecisionError(`Decimal is too long: at most ${MAX_DECIMAL_LENGTH} characters`);
   } else {
     throw new PrecisionError(`Expected a number or decimal string, got ${typeof input}`);
   }
   const match = DECIMAL_RE.exec(text);
-  if (!match) throw new PrecisionError(`Not a decimal number: ${JSON.stringify(input)}`);
+  if (!match) throw new PrecisionError(`Not a decimal number: ${JSON.stringify(typeof input === "string" ? text : input)}`);
   const [, sign = "", intPart = "", fracPart = "", expPart] = match;
-  if (intPart === "" && fracPart === "") throw new PrecisionError(`Not a decimal number: ${JSON.stringify(input)}`);
+  if (intPart === "" && fracPart === "") throw new PrecisionError(`Not a decimal number: ${JSON.stringify(typeof input === "string" ? text : input)}`);
   let m = BigInt((intPart || "0") + fracPart);
   let s = fracPart.length;
   const exp = expPart === undefined ? 0 : Number(expPart);
@@ -70,13 +79,14 @@ export function parseDec(input: number | string): Dec {
 
 /** Removes trailing zeros from the fractional part (keeps the value). */
 export function normalize(d: Dec): Dec {
-  let { m, s } = d;
+  const { m, s } = d;
   if (m === 0n) return { m: 0n, s: 0 };
-  while (s > 0 && m % 10n === 0n) {
-    m /= 10n;
-    s -= 1;
-  }
-  return { m, s };
+  if (s <= 0 || m % 10n !== 0n) return { m, s };
+  // Counted on the digits and divided out at once, not one BigInt division per zero.
+  const digits = m.toString();
+  let zeros = 0;
+  while (zeros < s && digits.charCodeAt(digits.length - 1 - zeros) === 48) zeros++;
+  return { m: m / 10n ** BigInt(zeros), s: s - zeros };
 }
 
 /** Formats as a plain decimal string without exponent and without trailing zeros. Negative zero becomes "0". */
