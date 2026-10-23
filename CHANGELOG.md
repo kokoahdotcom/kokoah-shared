@@ -65,6 +65,9 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   above it; before, any amount), never removes it (before, only keys without manual trading were refused), and may no
   longer sign `topUpIsolatedOnlyMargin`, whose target leverage has no amount to cap (`ACTION_TYPE_NOT_ALLOWED`). The
   user's own (`manual`) margin changes are unchanged.
+- `evaluatePolicy`: isolated margin that automation adds counts toward `maxDailyNotionalUsd` (its amount) and
+  `maxOrdersPerMinute` (one per addition), like an order (`DAILY_NOTIONAL_EXCEEDED`, `ORDER_RATE_EXCEEDED`): before,
+  automation could move the account's cross collateral into one isolated position up to the request rate.
 - `evaluatePolicy`: a `scheduleCancel` more than `SCHEDULE_CANCEL_MAX_LEAD_MS` (1 h) ahead of `context.now` is
   `INVALID_SUBJECT`, so raw wire actions get the bound `compileAction` already applies.
 - `verifyPolicySignature`: a format-3 (agent mandate) signature verifies only when the policy and mandate pass
