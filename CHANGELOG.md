@@ -7,6 +7,13 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `policy`: stop coverage. `PolicyContext.requireStopCoverage` (opt-in) with `accountBook` (the traded account's
+  positions and resting orders, read by the signer itself): under `requireStopLossForNewEntries`, a cancel or modify (the
+  exact wire action) that would leave a position that had a stop-loss without one is `STOP_LOSS_REQUIRED`, and so is
+  any cancel or modify when `accountBook` is missing. Covered: stop-loss triggers on the closing side, reduce-only or a
+  position TP/SL, covering the whole size, within `maxStopLossDistancePct` of the entry on the losing side when set.
+  Origin `bot` is exempt with `botEntriesWithoutStopLoss`. `stopCoverageProblems`, `positionCovered`, `AccountBook`,
+  `AccountOrder`, `AccountPosition`, `STOP_COVERAGE_ACTION_TYPES`. Callers that don't set it keep the old behaviour.
 - `bots`: `backtestCopy` runs a copy bot over a trader's past fills with the server's own `copyStep` (positions rebuilt
   from the fills, seen once per poll; copy orders at the latest price with 10 bps slippage and the taker fee; funding at
   the trader's rates; drawdown and daily loss stops; liquidation), and `copyChanges` reduces fills to the position
