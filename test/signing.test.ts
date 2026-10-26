@@ -8,11 +8,14 @@ import {
   buildExchangeRequest,
   buildRevokeAgent,
   buildSendAsset,
+  buildSpotSendToEvm,
   buildSubAccountTransfer,
   buildWithdraw,
+  evmSystemAddress,
   expiresAfterFromNow,
   formatAgentName,
   hashL1Action,
+  HYPE_SYSTEM_ADDRESS,
   isNonceInWindow,
   l1SigningDigest,
   l1TypedData,
@@ -180,6 +183,47 @@ describe("sendAsset typed data", () => {
     expect(() => buildSendAsset({ ...base, fromSubAccount: "0x12" as `0x${string}` })).toThrow(/fromSubAccount/);
     expect(() => buildSendAsset({ ...base, fromSubAccount: "0x0000000000000000000000000000000000000000" })).toThrow(/zero address/);
     expect(() => buildSendAsset({ ...base, fromSubAccount: destination })).toThrow(/differ/);
+  });
+});
+
+describe("spotSend to HyperEVM typed data", () => {
+  const htao = "HTAO:0x3958075da51fc7a18e390dc83bd71d87";
+  const base = { token: htao, tokenIndex: 452, amount: "1.250", nonce: NOW, network: MAINNET };
+  it("sends to the token's own system address and signs readable fields", () => {
+    const p = buildSpotSendToEvm(base);
+    expect(p.action).toEqual({
+      type: "spotSend",
+      signatureChainId: "0xa4b1",
+      hyperliquidChain: "Mainnet",
+      destination: "0x20000000000000000000000000000000000001c4",
+      token: htao,
+      amount: "1.25",
+      time: NOW,
+    });
+    expect(p.nonce).toBe(NOW);
+    expect(p.typedData.primaryType).toBe("HyperliquidTransaction:SpotSend");
+    expect(p.typedData.domain.name).toBe("HyperliquidSignTransaction");
+    expect(p.typedData.message).toEqual({ hyperliquidChain: "Mainnet", destination: p.action.destination, token: htao, amount: "1.25", time: NOW });
+  });
+  it("uses HYPE's own system address, whatever its index", () => {
+    expect(evmSystemAddress({ name: "HYPE", index: 150 })).toBe(HYPE_SYSTEM_ADDRESS);
+    expect(evmSystemAddress({ name: "HYPE", index: 1105 })).toBe(HYPE_SYSTEM_ADDRESS);
+    expect(evmSystemAddress({ name: "UBTC", index: 197 })).toBe("0x20000000000000000000000000000000000000c5");
+    const p = buildSpotSendToEvm({ ...base, token: "HYPE:0x0D01DC56DCAACA66AD901C959B4011EC", tokenIndex: 150, network: TESTNET });
+    expect(p.action).toMatchObject({ destination: HYPE_SYSTEM_ADDRESS, token: "HYPE:0x0d01dc56dcaaca66ad901c959b4011ec", hyperliquidChain: "Testnet" });
+  });
+  it("refuses bad tokens, indexes and amounts", () => {
+    expect(() => buildSpotSendToEvm({ ...base, token: "HTAO" })).toThrow(/name:tokenId/);
+    expect(() => buildSpotSendToEvm({ ...base, tokenIndex: -1 })).toThrow(RangeError);
+    expect(() => buildSpotSendToEvm({ ...base, tokenIndex: 1.5 })).toThrow(RangeError);
+    expect(() => buildSpotSendToEvm({ ...base, amount: "0" })).toThrow(/above zero/);
+    expect(() => buildSpotSendToEvm({ ...base, amount: "-2" })).toThrow(/above zero/);
+  });
+  it("recovers the main wallet from its signature", async () => {
+    const wallet = privateKeyToAccount(generatePrivateKey());
+    const p = buildSpotSendToEvm(base);
+    const hex = await wallet.signTypedData(p.typedData as Parameters<typeof wallet.signTypedData>[0]);
+    expect(await recoverUserSignedSigner({ typedData: p.typedData, signature: signatureFromHex(hex) })).toBe(wallet.address);
   });
 });
 

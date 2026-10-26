@@ -9,7 +9,8 @@
  *
  * The builders here return both the **typed data** (for `walletClient.signTypedData` / wagmi `useSignTypedData`) and
  * the **action** to post, derived from one set of inputs so they cannot drift apart. Types come from the SDK
- * (`ApproveAgentTypes`, `ApproveBuilderFeeTypes`, `Withdraw3Types`, `SendAssetTypes`, `UserSetAbstractionTypes`).
+ * (`ApproveAgentTypes`, `ApproveBuilderFeeTypes`, `Withdraw3Types`, `SendAssetTypes`, `SpotSendTypes`,
+ * `UserSetAbstractionTypes`).
  * HYPE staking is in `staking.ts`, so apps load it only where they stake.
  *
  * @module
@@ -21,6 +22,8 @@ import {
   ApproveBuilderFeeTypes,
   SendAssetRequest,
   SendAssetTypes,
+  SpotSendRequest,
+  SpotSendTypes,
   UserSetAbstractionRequest,
   UserSetAbstractionTypes,
   Withdraw3Request,
@@ -391,6 +394,61 @@ export function buildAccountMode(params: {
     UserSetAbstractionRequest.entries.action,
     UserSetAbstractionTypes,
     { type: "userSetAbstraction", user: params.user.toLowerCase(), abstraction: params.abstraction, nonce: params.nonce },
+    params,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// spotSend to HyperEVM
+// ---------------------------------------------------------------------------------------------
+
+/** HYPE's system address: a `spotSend` of HYPE here moves it from HyperCore to the sender's HyperEVM address. */
+export const HYPE_SYSTEM_ADDRESS = "0x2222222222222222222222222222222222222222";
+
+/**
+ * A spot token's system address (Hyperliquid "HyperCore <> HyperEVM transfers"): `0x20` followed by the token index,
+ * big-endian; HYPE has its own ({@link HYPE_SYSTEM_ADDRESS}). A `spotSend` there moves the token from HyperCore to the
+ * sender's own address on HyperEVM, where it lands in the token's linked contract.
+ */
+export function evmSystemAddress(token: { name: string; index: number }): `0x${string}` {
+  if (!Number.isSafeInteger(token.index) || token.index < 0) throw new RangeError("token index must be a non-negative integer");
+  if (token.name === "HYPE") return HYPE_SYSTEM_ADDRESS;
+  return `0x20${token.index.toString(16).padStart(38, "0")}`;
+}
+
+/** Parameters for {@link buildSpotSendToEvm}. */
+export interface SpotSendToEvmParams {
+  /** `tokenName:tokenId` from `spotMeta`, e.g. "HTAO:0x3958075da51fc7a18e390dc83bd71d87". */
+  token: string;
+  /** The token's index in `spotMeta` (names its system address). */
+  tokenIndex: number;
+  /** Amount in token units (not wei); normalized, e.g. "1.50" → "1.5". Must be above zero. */
+  amount: string | number;
+  nonce: number;
+  network: UserSignedNetwork;
+  signatureChainId?: `0x${string}`;
+}
+
+/**
+ * Builds `spotSend` (`HyperliquidTransaction:SpotSend`) to the token's system address: the main wallet moves its own
+ * spot token from HyperCore to its own address on HyperEVM. The destination is always derived from the token, so this
+ * builder can never send funds to another account. Signed fields are readable strings (destination, token, amount).
+ */
+export function buildSpotSendToEvm(params: SpotSendToEvmParams): PreparedUserSignedAction {
+  const token = TOKEN_SPEC.exec(params.token);
+  if (!token) throw new RangeError('token must be "name:tokenId" (a 16-byte hex token id)');
+  const amount = normalizeDecimal(params.amount);
+  if (amount.startsWith("-") || !(toNumber(amount) > 0)) throw new RangeError("amount must be above zero");
+  return prepareUserSigned(
+    SpotSendRequest.entries.action,
+    SpotSendTypes,
+    {
+      type: "spotSend",
+      destination: evmSystemAddress({ name: token[1] as string, index: params.tokenIndex }),
+      token: `${token[1]}:${(token[2] as string).toLowerCase()}`,
+      amount,
+      time: params.nonce,
+    },
     params,
   );
 }
