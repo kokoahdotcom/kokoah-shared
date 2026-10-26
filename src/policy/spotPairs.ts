@@ -44,8 +44,9 @@ const pin = (coin: string, index: number, name: string, tokenIndex: number, toke
  * Verified token/USDC pairs by network: the tokens of Hyperliquid's own "Strict" spot list (the base-token ids its web
  * app hard-codes and shows by default; `series-DoSu52JX.js`, read 2026-09-25) that have a USDC pair, pinned from
  * `spotMeta` on 2026-09-25 (every pin still matched mainnet `spotMeta` on 2026-10-05). Stablecoins of Convert
- * (`STABLECOIN_PAIRS`) are not repeated here. Left out: AXL on mainnet and UAVAX on testnet (no USDC pair). Many of
- * these trade thinly; signers add a per-order volume cap on mainnet ({@link spotOrderVolumeProblem}).
+ * (`STABLECOIN_PAIRS`) are not repeated here. Left out: AXL on mainnet and UAVAX on testnet (no USDC pair). One
+ * addition outside that list: HTAO on mainnet. Many of these trade thinly; signers add a per-order volume cap on
+ * mainnet ({@link spotOrderVolumeProblem}).
  */
 export const VERIFIED_SPOT_PAIRS: Readonly<Record<SpotNetwork, readonly SpotPairPin[]>> = Object.freeze({
   mainnet: Object.freeze<SpotPairPin[]>([
@@ -99,6 +100,9 @@ export const VERIFIED_SPOT_PAIRS: Readonly<Record<SpotNetwork, readonly SpotPair
     pin("@702", 702, "NVDAX", 845, "0x8e3a7531199e3f0d6e616a1f9edae9a3", M),
     pin("@705", 705, "SKHYX", 848, "0xd7721f1acc95fd05516bdc5138ded7bc", M),
     pin("@719", 719, "TREAD", 512, "0xc03b5b39372b9daa292adc59a8568263", M),
+    // Not on the Strict list: HTAO, TAO bridged by the Mentat bridge (its HyperEVM contract is the bridge's OFT,
+    // 0xdf23…621f), for Buy TAO. Pinned from mainnet `spotMeta` on 2026-10-26.
+    pin("@307", 307, "HTAO", 452, "0x3958075da51fc7a18e390dc83bd71d87", M),
   ]),
   testnet: Object.freeze<SpotPairPin[]>([
     pin("PURR/USDC", 0, "PURR", 1, "0xc4bf3f870c0e9465323c0b6ed28096c2", T),
