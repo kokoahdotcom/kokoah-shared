@@ -17,7 +17,7 @@ import { fixture } from "./helpers.js";
 
 type Meta = { universe: Array<{ name: string; index: number; tokens: number[]; isCanonical?: boolean }>; tokens: Array<{ name: string; index: number; tokenId: string; szDecimals: number }> };
 // `spotMetaAndAssetCtxs` captured on 2026-09-25, trimmed to the pinned pairs, a few busy unverified pairs and a few
-// dead ones.
+// dead ones; mainnet's HTAO pair (@307) added from a capture on 2026-10-26.
 const captured = (network: "mainnet" | "testnet") => structuredClone(fixture<[Meta, Array<{ coin: string; dayNtlVlm: string }>]>(`${network}-spotMetaAndAssetCtxs.json`));
 const meta = (network: "mainnet" | "testnet") => captured(network)[0];
 
@@ -41,8 +41,15 @@ describe("verified spot pairs", () => {
   it("cover Hyperliquid's strict list: HYPE, BTC, ETH and SOL on mainnet, PURR and HYPE on testnet", () => {
     expect(verifiedSpotPairCoins("mainnet")).toEqual(expect.arrayContaining(["@107", "@142", "@151", "@156", "PURR/USDC"]));
     expect(verifiedSpotPairCoins("testnet")).toEqual(expect.arrayContaining(["PURR/USDC", "@1035"]));
-    expect(VERIFIED_SPOT_PAIRS.mainnet).toHaveLength(50);
+    expect(VERIFIED_SPOT_PAIRS.mainnet).toHaveLength(51);
     expect(VERIFIED_SPOT_PAIRS.testnet).toHaveLength(6);
+  });
+
+  it("add HTAO (Buy TAO) on mainnet only, pinned to its token id", () => {
+    const htao = VERIFIED_SPOT_PAIRS.mainnet.find((p) => p.base.name === "HTAO");
+    expect(htao).toMatchObject({ coin: "@307", index: 307, base: { index: 452, tokenId: "0x3958075da51fc7a18e390dc83bd71d87" } });
+    expect(verifiedSpotPairs("mainnet", meta("mainnet") as unknown as SpotMetaLike).map((p) => p.coin)).toContain("@307");
+    expect(VERIFIED_SPOT_PAIRS.testnet.some((p) => p.base.name === "HTAO")).toBe(false);
   });
 
   it("drop a pair whose token id, name, index, pair name or token order differs (fail closed)", () => {
