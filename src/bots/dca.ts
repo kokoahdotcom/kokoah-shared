@@ -154,7 +154,8 @@ export function dcaStep(input: DcaStepInput): PlannerStep<DcaState> {
   if (exhausted && c.takeProfitPct === undefined) {
     if (state.lastCloid && !terminal(input.orders[state.lastCloid])) return { state, place, cancel, notes };
     cancel.push(...openSafety());
-    return { state, place, cancel, notes, stop: { reason: `All ${c.maxOrders} orders were placed.`, closePosition: false, finished: true } };
+    const reason = c.maxOrders === 1 ? "The 1 order was placed." : `All ${c.maxOrders} orders were placed.`;
+    return { state, place, cancel, notes, stop: { reason, closePosition: false, finished: true } };
   }
 
   // The recurring order.

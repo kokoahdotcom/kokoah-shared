@@ -112,6 +112,11 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   until the daily reset, while closing and reducing still work (it said "new Kokoah orders are blocked").
 - `sendOpsBatch`: the plain notice that replaces a message the receiver refused scrubs its titles with `scrubOpsText`,
   like the embeds it stands in for (they went out unscrubbed).
+- `bots`: clearer English in the copy, grid and DCA notes and stop reasons: "Opening a long on ETH: about $1200." and
+  "Adding about $300 to the long on ETH." (were "Opening a ETH long worth about …" and "Adding to a ETH long …"),
+  "Reducing the copied ETH long by 25%." (was "Reducing by 25% the copied ETH long."), one buy, sell or order in the
+  singular ("1 buy and 1 sell", "The 1 order was placed." instead of "All 1 orders …"), and the copy's start note for
+  none, one or several of the trader's positions (was "position(s) at start").
 
 ## [0.1.3] - 2026-09-23
 

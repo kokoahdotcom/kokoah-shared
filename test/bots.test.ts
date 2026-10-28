@@ -118,6 +118,7 @@ describe("grid", () => {
     expect(first.state.size).toBe(gridOrderSize(c, 4));
     expect(first.state.size).toBe("0.025");
     expect(first.place).toHaveLength(10);
+    expect(first.notes).toEqual(["Grid set up around 2510: 5 buys and 5 sells."]);
     const byPrice = Object.fromEntries(first.place.map((o) => [o.price, o.side]));
     expect(byPrice["2500"]).toBeUndefined();
     expect(byPrice["2400"]).toBe("buy");
@@ -150,7 +151,8 @@ describe("grid", () => {
     expect(waiting.state.phase).toBe("waiting");
     const start = gridStep({ config: c, state: waiting.state, mark: 2900, szDecimals: 4, orders: {}, cloid, maxNewOrders: 5 });
     expect(start.place).toHaveLength(5);
-    expect(start.notes.join(" ")).toMatch(/Grid set up/);
+    // 1000 to 2800 below the start, and one line (3000) above it.
+    expect(start.notes).toEqual(["Grid set up around 2900: 19 buys and 1 sell."]);
     let state = start.state;
     const orders: Record<string, BotOrderView> = {};
     for (const o of start.place) orders[o.cloid] = { status: "open", size: 0.05, filledSize: 0 };
@@ -268,7 +270,9 @@ describe("dca", () => {
     const waiting = dcaStep({ config: c, state: s1.state, now: NOW + 1000, mark: 100_000, szDecimals: 5, position: { size: 0, entryPrice: 0 }, orders: { [s1.place[0]!.cloid]: { status: "pending", size: 0.0002, filledSize: 0 } }, cloid, maxNewOrders: 10 });
     expect(waiting.stop).toBeUndefined();
     const done = dcaStep({ config: c, state: s1.state, now: NOW + 1000, mark: 100_000, szDecimals: 5, position: { size: 0.0002, entryPrice: 100_000 }, orders: { [s1.place[0]!.cloid]: { status: "filled", size: 0.0002, filledSize: 0.0002 } }, cloid, maxNewOrders: 10 });
-    expect(done.stop).toMatchObject({ finished: true, closePosition: false });
+    expect(done.stop).toEqual({ reason: "The 1 order was placed.", finished: true, closePosition: false });
+    const many = dcaStep({ config: dca({ maxOrders: 2 }), state: { ...s1.state, ordersPlaced: 2 }, now: NOW + 1000, mark: 100_000, szDecimals: 5, position: { size: 0.0004, entryPrice: 100_000 }, orders: { [s1.place[0]!.cloid]: { status: "filled", size: 0.0002, filledSize: 0.0002 } }, cloid, maxNewOrders: 10 });
+    expect(many.stop?.reason).toBe("All 2 orders were placed.");
   });
 
   it("skips orders above the leverage room", () => {
@@ -314,16 +318,28 @@ describe("copy", () => {
   it("takes the positions at start as the baseline and copies later changes by ratio", () => {
     const start = copyStep({ ...base, config: config(), state: null, positions: {}, leader: { seq: 3, positions: { BTC: 1 }, polledAt: NOW } });
     expect(start.place).toHaveLength(0);
-    expect(start.notes[0]).toMatch(/not copied/);
+    expect(start.notes).toEqual(["Copying from now on. The trader's 1 open position at the start is not copied."]);
     // The leader adds 0.05 BTC and opens 2 ETH short.
     const s = copyStep({ ...base, config: config(), state: start.state, positions: {}, leader: { seq: 4, positions: { BTC: 1.05, ETH: -2 }, polledAt: NOW } });
     expect(s.place.map((o) => [o.coin, o.side, o.size, o.reduceOnly, o.label])).toEqual([
       ["BTC", "buy", "0.005", false, "Copy add BTC"],
       ["ETH", "sell", "0.2", false, "Copy open ETH"],
     ]);
+    expect(s.notes).toEqual(["Adding about $500 to the long on BTC.", "Opening a short on ETH: about $500."]);
     expect(s.state.leaderSeq).toBe(4);
     // The same poll again does nothing.
     expect(copyStep({ ...base, config: config(), state: s.state, positions: {}, leader: { seq: 4, positions: { BTC: 1.05, ETH: -2 }, polledAt: NOW } }).place).toHaveLength(0);
+  });
+
+  it("says how many of the trader's positions at start are not copied", () => {
+    const note = (positions: Record<string, number>) => copyStep({ ...base, config: config(), state: null, positions: {}, leader: { seq: 1, positions, polledAt: NOW } }).notes;
+    expect(note({})).toEqual(["Copying from now on. The trader had no open positions at the start."]);
+    expect(note({ BTC: 1, ETH: -2 })).toEqual(["Copying from now on. The trader's 2 open positions at the start are not copied."]);
+    // The first poll after the copy started is the baseline too.
+    const waiting = copyStep({ ...base, config: config(), state: null, positions: {}, leader: null });
+    expect(waiting.notes).toEqual(["Waiting for the first poll of the trader's positions."]);
+    const first = copyStep({ ...base, config: config(), state: waiting.state, positions: {}, leader: { seq: 1, positions: { BTC: 1 }, polledAt: NOW } });
+    expect(first.notes).toEqual(["Copying from now on. The trader's 1 open position at the start is not copied."]);
   });
 
   it("reduces proportionally, closes and flips", () => {
@@ -338,6 +354,7 @@ describe("copy", () => {
       // BTC reduced by 75%.
       ["BTC", "sell", "0.0075", true],
     ].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+    expect(s.notes).toEqual(["Reducing the copied BTC long by 75%.", "Closing the copied ETH short.", "Opening a long on ETH: about $250."]);
   });
 
   it("applies the caps, the allow and deny lists, HIP-3 and claimed markets", () => {

@@ -102,11 +102,7 @@ export function copyStep(input: CopyStepInput): PlannerStep<CopyState> {
       day: { start: dayStart, pnlAtStart: pnl },
       seq: 0,
     };
-    notes.push(
-      leader
-        ? `Copying from now on. The trader's ${Object.keys(leader.positions).length} open position(s) at start are not copied.`
-        : "Waiting for the first poll of the trader's positions.",
-    );
+    notes.push(leader ? baselineNote(leader) : "Waiting for the first poll of the trader's positions.");
     return { state, place, cancel: [], notes };
   }
   const state = structuredClone(input.state);
@@ -121,7 +117,7 @@ export function copyStep(input: CopyStepInput): PlannerStep<CopyState> {
     // The first poll arrived after the copy started: it is the baseline.
     state.leaderSeq = leader.seq;
     state.leader = { ...leader.positions };
-    notes.push(`Copying from now on. The trader's ${Object.keys(leader.positions).length} open position(s) at start are not copied.`);
+    notes.push(baselineNote(leader));
     return { state, place, cancel: [], notes };
   }
 
@@ -176,7 +172,8 @@ export function copyStep(input: CopyStepInput): PlannerStep<CopyState> {
           mine[coin] = held - delta;
           account[coin] = inAccount - delta;
           accountNotional = Math.max(0, accountNotional - Number(text) * mark);
-          notes.push(`${closing ? "Closing" : `Reducing by ${round2(fraction * 100)}%`} the copied ${coin} ${held > 0 ? "long" : "short"}.`);
+          const copied = `the copied ${coin} ${held > 0 ? "long" : "short"}`;
+          notes.push(closing ? `Closing ${copied}.` : `Reducing ${copied} by ${round2(fraction * 100)}%.`);
         }
       }
     }
@@ -213,12 +210,21 @@ export function copyStep(input: CopyStepInput): PlannerStep<CopyState> {
       mine[coin] = current + delta;
       account[coin] = (account[coin] ?? 0) + delta;
       accountNotional += Number(size) * mark;
-      notes.push(`${a === 0 || flip ? "Opening" : "Adding to"} a ${coin} ${b > 0 ? "long" : "short"} worth about $${round2(Number(size) * mark)}.`);
+      const usdText = `$${round2(Number(size) * mark)}`;
+      const sideText = b > 0 ? "long" : "short";
+      notes.push(a === 0 || flip ? `Opening a ${sideText} on ${coin}: about ${usdText}.` : `Adding about ${usdText} to the ${sideText} on ${coin}.`);
     }
   }
   state.leaderSeq = leader.seq;
   state.leader = { ...leader.positions };
   return { state, place, cancel: [], notes };
+}
+
+/** The note when the copy takes the leader's positions as its baseline. */
+function baselineNote(leader: LeaderView): string {
+  const n = Object.keys(leader.positions).length;
+  if (n === 0) return "Copying from now on. The trader had no open positions at the start.";
+  return `Copying from now on. The trader's ${n} open ${n === 1 ? "position at the start is" : "positions at the start are"} not copied.`;
 }
 
 function round2(x: number): string {
