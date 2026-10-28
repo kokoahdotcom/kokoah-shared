@@ -224,7 +224,9 @@ export function gridStep(input: GridStepInput): PlannerStep<GridState> {
   if (state.phase === "waiting") {
     if (mark < c.lower || mark > c.upper) return { state, place, cancel: [], notes, stop: undefined };
     Object.assign(state, gridSetup(c, state.prices, mark));
-    notes.push(`Grid set up around ${mark}: ${Object.values(state.slots).filter((s) => s.side === "buy").length} buys and ${Object.values(state.slots).filter((s) => s.side === "sell").length} sells.`);
+    const buys = Object.values(state.slots).filter((s) => s.side === "buy").length;
+    const sells = Object.values(state.slots).filter((s) => s.side === "sell").length;
+    notes.push(`Grid set up around ${mark}: ${buys} buy${buys === 1 ? "" : "s"} and ${sells} sell${sells === 1 ? "" : "s"}.`);
   }
 
   if (state.phase === "building") {
