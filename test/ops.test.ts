@@ -9,6 +9,7 @@ import {
   parseDiscordMention,
   postOpsWebhook,
   scrubOpsText,
+  scrubPhrases,
   sendOpsBatch,
   slackPayloads,
   stackFrames,
@@ -46,6 +47,36 @@ describe("scrubOpsText", () => {
     expect(scrubOpsText("a\u0000b\u202ec\u200bd\ne\tf")).toBe("abcd\ne\tf");
     const ordinary = "TypeError: Cannot read properties of undefined (reading 'coin')\n    at run (dist/src/engine/worker.js:12:34)";
     expect(scrubOpsText(ordinary)).toBe(ordinary);
+  });
+});
+
+// BIP-39's published test vectors: not anyone's wallet.
+const PHRASE = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+const PHRASE_CAPS = "Legal Winner Thank Year Wave Sausage Worth Useful Legal Winner Thank Yellow";
+
+describe("scrubPhrases", () => {
+  it("hides a recovery phrase, whole or in part, in any case and between commas or line breaks", () => {
+    expect(scrubPhrases(`Error: got ${PHRASE} here`)).toBe("Error: got [phrase] here");
+    expect(scrubPhrases(PHRASE_CAPS)).toBe("[phrase]");
+    expect(scrubPhrases(PHRASE.split(" ").join(",\n"))).toBe("[phrase]");
+    expect(scrubPhrases("repro legal winner thank year wave sausage n=1")).toBe("repro [phrase] n=1");
+  });
+
+  it("keeps ordinary text and short runs of those words", () => {
+    for (const ordinary of [
+      "TypeError: Cannot read properties of null (reading 'extensions')",
+      "That recovery phrase is not valid.",
+      "the order was rejected because the price moved too far",
+      "legal winner thank year wave",
+    ])
+      expect(scrubPhrases(ordinary), ordinary).toBe(ordinary);
+  });
+
+  it("is part of scrubOpsText, also for a phrase in a quoted secret", () => {
+    expect(scrubOpsText(`Error: ${PHRASE} n=1`)).toBe("Error: [phrase] n=1");
+    const thrown = scrubOpsText(`Non-error thrown: {"mnemonic":"${PHRASE}","n":1}`);
+    expect(thrown).toBe('Non-error thrown: {"mnemonic":"[redacted]","n":1}');
+    expect(scrubOpsText('{"password":"two words","ok":true}')).toBe('{"password":"[redacted]","ok":true}');
   });
 });
 
