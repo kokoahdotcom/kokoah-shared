@@ -4,7 +4,7 @@
  * one) within the receiver's limits.
  *
  * - **Nothing secret or personal leaves.** {@link scrubOpsText} removes credentials in URLs, query strings, bearer
- *   tokens, `key=value` secrets, known API-key and token formats (OpenAI/Anthropic `sk-`, Google `AIza`, Slack, GitHub,
+ *   tokens, `key=value` secrets, recovery phrases ({@link scrubPhrases}), known API-key and token formats (OpenAI/Anthropic `sk-`, Google `AIza`, Slack, GitHub,
  *   Telegram bot tokens, JWTs, Discord webhook URLs), PEM blocks, private keys, signatures and long hex or base64,
  *   wallet addresses, e-mail and IP addresses, and control characters. Alerts go to a third party (Discord).
  * - **One bug, one message.** {@link opsFingerprint} groups an error by where it happened and its message with the
@@ -18,6 +18,8 @@
  * - **Partly sent is partly sent.** {@link sendOpsBatch} says which alerts and problems went out before a failure, so
  *   a sender marks exactly those and never posts a message (or its mention) twice.
  */
+
+import { english } from "viem/accounts";
 
 export type OpsSeverity = "critical" | "error" | "warning";
 
@@ -79,6 +81,37 @@ export interface OpsProblemNotice {
 const SECRET_KEYS =
   "password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key|apikey|x-api-key|authorization|auth|cookie|set-cookie|session|signature|private[_-]?key|privatekey|mnemonic|seed|hmac|kek|credential|credentials";
 
+/** BIP-39's English words: the recovery phrases of Ethereum and Bittensor wallets are made of them. */
+const PHRASE_WORDS: ReadonlySet<string> = new Set(english);
+/** This many of those words in a row are taken for a recovery phrase (or part of one): ordinary text seldom has them. */
+export const PHRASE_RUN = 6;
+
+/**
+ * Hides recovery phrases: a run of at least {@link PHRASE_RUN} BIP-39 words (any case, between spaces, commas or line
+ * breaks) becomes `[phrase]`, also inside a longer run of words. The backend's error reports (src/routes/support.ts) and
+ * the app's (src/services/errorReports.ts) use it as well as {@link scrubOpsText}.
+ */
+export function scrubPhrases(s: string): string {
+  return s.replace(/(?<![A-Za-z])[A-Za-z]{3,8}(?![A-Za-z])(?:[\s,]{1,4}[A-Za-z]{3,8}(?![A-Za-z]))+/g, (run) => {
+    const parts = run.split(/([\s,]+)/);
+    const out: string[] = [];
+    for (let i = 0; i < parts.length; ) {
+      let j = i;
+      while (j < parts.length && PHRASE_WORDS.has(parts[j]!.toLowerCase())) j += 2;
+      if ((j - i) / 2 >= PHRASE_RUN) {
+        out.push("[phrase]");
+        if (j - 1 < parts.length) out.push(parts[j - 1]!);
+        i = j;
+      } else {
+        out.push(parts[i]!);
+        if (i + 1 < parts.length) out.push(parts[i + 1]!);
+        i += 2;
+      }
+    }
+    return out.join("");
+  });
+}
+
 /** Longest text scrubbed (callers keep far less): bounds the work on attacker-supplied text. */
 const MAX_SCRUB = 8_000;
 
@@ -111,11 +144,14 @@ export function scrubOpsText(input: string): string {
   // …and of paths (`/v1/x?token=…`).
   s = s.replace(/(^|[\s("'])(\/[\w./~%-]*)[?#][^\s)"']*/g, "$1$2");
   s = s.replace(/\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]");
+  s = scrubPhrases(s);
   // `password=…`, `"secret":"…"`, and environment names ending in one (`HMAC_SECRET=`, `OPENROUTER_API_KEY=`).
   s = s.replace(
     new RegExp(`(?<![A-Za-z0-9])((?:[A-Za-z0-9]{1,40}_){0,4}(?:${SECRET_KEYS}))(\\s*[=:]\\s*|"\\s*:\\s*"?|'\\s*:\\s*'?)([^\\s,;&"'}\\]]+)`, "gi"),
     "$1$2[redacted]",
   );
+  // …and a quoted secret's whole value (`"mnemonic":"word word …"`), which the rule above cuts at the first space.
+  s = s.replace(new RegExp(`("(?:${SECRET_KEYS})"\\s*:\\s*)"(?:[^"\\\\]|\\\\.){0,2000}"`, "gi"), '$1"[redacted]"');
   s = s.replace(/(?<![A-Za-z0-9_-])sk-(?:ant-)?[A-Za-z0-9_-]{16,256}/g, "sk-[redacted]");
   s = s.replace(/(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{30,128}/g, "AIza[redacted]");
   s = s.replace(/(?<![A-Za-z0-9_-])xox[abprs]-[A-Za-z0-9-]{10,256}/g, "xox-[redacted]");
