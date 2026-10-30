@@ -118,7 +118,9 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   - (follow-up) the entries replay takes each side at its worst: every buy entry filled and no sell entry, then the
     other way round, so an opposite entry that never fills can't make a growing position look covered. A side whose
     entries only shrink the position (a partial close with orders that aren't reduce-only) passes; adding to a
-    position its stops don't cover stays refused;
+    position its stops don't cover stays refused. With `maxStopLossDistancePct` the stops' distance is measured from
+    the worst entry price any of the fills could give (a long: the highest of the position's entry and the side's
+    prices; a short: the lowest), not the all-filled average;
   - (follow-up) `AccountOrder.isMarket` and `limitPrice` are required (`limitPrice` may be `undefined`), so a caller
     that doesn't read them fails to compile instead of losing every stop-limit's cover;
   - (follow-up) only origin `bot` may place an order whose cloid carries the bot origin (`ORIGIN_NOT_ALLOWED`), so no

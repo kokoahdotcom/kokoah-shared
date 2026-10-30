@@ -101,7 +101,9 @@ export interface PolicyContext {
    * `scheduleCancel` (it would cancel every stop-loss when it fires; clearing one stays allowed). For signers that read
    * the traded account's positions and orders themselves (the signer service, the signer frame); others leave it
    * unset. Where the policy says `botEntriesWithoutStopLoss`, origin `bot` is exempt for its entries, and its cancels
-   * and modifies only for orders whose cloid carries the bot origin (its own: no other origin may place one).
+   * and modifies only for orders whose cloid carries the bot origin (its own: no other origin may place one). That
+   * exemption trusts any order on the book whose cloid carries the bot byte, including ones not placed through a Kokoah
+   * signer (on Hyperliquid directly, or before only bots could place them), which this check can't tell apart.
    */
   requireStopCoverage?: boolean;
   /** The traded account's positions and resting orders on the markets the action touches, read by the signer itself. */

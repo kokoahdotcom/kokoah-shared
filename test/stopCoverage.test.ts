@@ -299,4 +299,31 @@ describe("stop coverage of the whole position on entries (stops required)", () =
     const move = { ...moveStop(), order: { ...(moveStop() as unknown as { order: Record<string, unknown> }).order, cloid: generateCloid("bot") } } as unknown as ActionIntentInput;
     expect(codes(check(move, { policy: bots }))).toEqual(["ORIGIN_NOT_ALLOWED"]);
   });
+
+  it("measures the stops' distance from the worst entry price the fills could give, not the all-filled average", () => {
+    // Max 5%. Long 1 BTC from 100,000 with no stop. One action: buy 0.01 at 100,000 with a stop at 96,000; a far buy of
+    // 1 at 85,000 with a stop at 81,000; a reduce-only sell stop for 2 at 88,500. All filled: 2.01 at about 92,500, the
+    // 88,500 stop 4.3% below. If the far buy never fills: 1.01 at 100,000 with stops 11.5% and 19% away.
+    const tight: Policy = { ...policy, maxStopLossDistancePct: 5 };
+    const stopWire = (s: string, triggerPx: string, p: string) => ({ a: 0, b: false, p, s, r: true, t: { trigger: { isMarket: true, triggerPx, tpsl: "sl" } } });
+    const wire = {
+      type: "order",
+      orders: [
+        { a: 0, b: true, p: "100000", s: "0.01", r: false, t: { limit: { tif: "Gtc" } } },
+        stopWire("0.01", "96000", "86400"),
+        { a: 0, b: true, p: "85000", s: "1", r: false, t: { limit: { tif: "Gtc" } } },
+        stopWire("1", "81000", "72900"),
+        stopWire("2", "88500", "79650"),
+      ],
+      grouping: "na",
+      builder: { b: BUILDER.address, f: 25 },
+    };
+    const uncovered = book({ positions: [{ coin: "BTC", size: 1, entryPrice: 100_000 }], orders: [] });
+    const d = evaluatePolicy({ kind: "wire", action: wire, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ policy: tight, accountBook: uncovered }));
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(d.violations[0]!.message).toContain("the BTC position of 2.01 needs stop-losses within 5% of its entry");
+    // Stops within 5% of the highest price any fill could give (100,000) cover it.
+    const near = { ...wire, orders: [wire.orders[0], wire.orders[1], wire.orders[2], stopWire("1", "81000", "72900"), stopWire("2", "95500", "85950")] };
+    expect(evaluatePolicy({ kind: "wire", action: near, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ policy: tight, accountBook: uncovered })).allowed).toBe(true);
+  });
 });

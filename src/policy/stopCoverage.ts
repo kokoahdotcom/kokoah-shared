@@ -254,9 +254,12 @@ export interface CoverageLeg {
  * entry filled and no buy entry (at its limit or trigger, a market order at `mark`), since an entry on the other side
  * may never fill. A side whose entries only shrink the position (a partial close with orders that aren't reduce-only)
  * adds no risk and passes; otherwise the position it leaves must be covered by the account's resting stop-losses
- * together with the stop-losses the action places itself. So an entry can't add to a position whose stops no longer
- * cover it (an earlier stop left behind by a move of the average entry, say), two entries can't share one stop sized
- * for one of them, and an opposite entry that never fills can't make a growing position look covered.
+ * together with the stop-losses the action places itself. The stops' distance is measured from the worst entry price
+ * any of those fills could give, whichever fill and in whatever order (a long: the highest of the position's entry and
+ * the side's prices; a short: the lowest), since an entry on the same side may never fill either. So an entry can't add
+ * to a position whose stops no longer cover it (an earlier stop left behind by a move of the average entry, say), two
+ * entries can't share one stop sized for one of them, and an entry that never fills can't make a growing position look
+ * covered.
  */
 export function positionAfterEntriesProblem(input: { coin: string; legs: readonly CoverageLeg[]; book: AccountBook; mark?: number | undefined; maxStopLossDistancePct?: number | undefined }): string | null {
   const { coin } = input;
@@ -285,19 +288,19 @@ export function positionAfterEntriesProblem(input: { coin: string; legs: readonl
     if (entries.length === 0) continue;
     const start = pos?.size ?? 0;
     let size = start;
-    let entry = pos?.entryPrice ?? 0;
+    const prices: number[] = [];
     for (const l of entries) {
       const px = l.isTrigger ? l.triggerPrice : (l.price ?? input.mark);
       if (px === undefined || !(px > 0) || !(l.size > 0)) return `Cannot check the stop-losses of the ${coin} position without a price for this order.`;
-      const delta = l.isBuy ? l.size : -l.size;
-      const next = size + delta;
-      if (size === 0 || Math.sign(size) === Math.sign(delta)) entry = (Math.abs(size) * entry + l.size * px) / Math.abs(next);
-      else if (Math.sign(next) !== Math.sign(size)) entry = px;
-      size = next;
+      size += l.isBuy ? l.size : -l.size;
+      prices.push(px);
     }
     // Only smaller, on the same side (or closed): risk taken off, not added.
     if (Math.abs(size) <= 1e-12 || (Math.sign(size) === Math.sign(start) && Math.abs(size) <= Math.abs(start))) continue;
-    const result: AccountPosition = { coin, size, entryPrice: entry };
+    // The position's own entry counts where the result is on its side; past a flip only the new side's prices do.
+    if (start !== 0 && Math.sign(start) === Math.sign(size) && pos !== undefined) prices.push(pos.entryPrice);
+    const worst = size > 0 ? Math.max(...prices) : Math.min(...prices);
+    const result: AccountPosition = { coin, size, entryPrice: worst };
     if (positionCovered(result, orders, input.maxStopLossDistancePct)) continue;
     return `Once this fills, the ${coin} position of ${fmt(Math.abs(size))} needs stop-losses${within(input.maxStopLossDistancePct)} for all of it; this order's stop and the resting ones cover ${fmt(coveredSize(result, orders, input.maxStopLossDistancePct))}. Place a stop for the rest first.`;
   }
