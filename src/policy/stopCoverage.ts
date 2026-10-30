@@ -49,10 +49,11 @@ export interface AccountBook {
   positions: readonly AccountPosition[];
   orders: readonly AccountOrder[];
   /**
-   * Orders the action names that the signer found closed on Hyperliquid (filled, canceled or never placed), by oid or
-   * lowercase cloid: naming one takes nothing away. Every other order a cancel or modify names must be in `orders`.
+   * Orders the action names that the signer looked up on Hyperliquid on their own and found can't be a stop-loss of any
+   * position (closed: filled, canceled or never placed; or open but not a perp stop-loss), by oid or lowercase cloid:
+   * naming one takes nothing away. Every other order a cancel or modify names must be in `orders`.
    */
-  closed?: ReadonlyArray<number | string>;
+  notStops?: ReadonlyArray<number | string>;
 }
 
 /** Action types {@link stopCoverageProblems} checks: the ones that can take a resting stop away. */
@@ -141,7 +142,7 @@ export function stopCoverageProblems(input: {
   const touched = new Set<string>();
   // Targets the caller may change freely, and named orders the book doesn't have.
   const free = new Set<number>();
-  const closed = new Set((book.closed ?? []).map((r) => (typeof r === "string" ? r.toLowerCase() : r)));
+  const harmless = new Set((book.notStops ?? []).map((r) => (typeof r === "string" ? r.toLowerCase() : r)));
   const missing: string[] = [];
   const coinOf = (asset: unknown): string | undefined => (typeof asset === "number" ? input.registry.getByAssetId(asset)?.coin : undefined);
   const named = (ref: unknown): number[] => {
@@ -150,7 +151,7 @@ export function stopCoverageProblems(input: {
     if (hits.length === 0) {
       const key = typeof ref === "string" ? ref.toLowerCase() : ref;
       const exempt = typeof key === "string" && input.exempt?.(key) === true;
-      if ((typeof key === "number" || typeof key === "string") && !closed.has(key) && !exempt) missing.push(String(key));
+      if ((typeof key === "number" || typeof key === "string") && !harmless.has(key) && !exempt) missing.push(String(key));
     }
     return hits;
   };
