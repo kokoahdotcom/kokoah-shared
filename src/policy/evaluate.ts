@@ -101,7 +101,7 @@ export interface PolicyContext {
    * `scheduleCancel` (it would cancel every stop-loss when it fires; clearing one stays allowed). For signers that read
    * the traded account's positions and orders themselves (the signer service, the signer frame); others leave it
    * unset. Where the policy says `botEntriesWithoutStopLoss`, origin `bot` is exempt for its entries, and its cancels
-   * and modifies only for orders whose cloid carries the bot origin (its own).
+   * and modifies only for orders whose cloid carries the bot origin (its own: no other origin may place one).
    */
   requireStopCoverage?: boolean;
   /** The traded account's positions and resting orders on the markets the action touches, read by the signer itself. */
@@ -335,6 +335,12 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
     }
   }
 
+  // A cloid with the bot origin marks a bot's own order, which an exempt bot may cancel or change freely: only a bot
+  // may place one.
+  if (origin !== "bot" && placedCloids(intent, wire).some((c) => isBotCloid(c))) {
+    add("ORIGIN_NOT_ALLOWED", `Only origin "bot" may place an order whose cloid carries the bot origin.`);
+  }
+
   const legs = collectOrderLegs(intent, wire, context, add);
   if (legs.length > 0) checkOrderLegs(legs, actionType, wire, context, coinAllowed, add, origin);
 
@@ -559,6 +565,27 @@ function attachedStopProblem(entry: OrderLeg, legs: OrderLeg[], rawMark: number 
   return maxDistancePct !== undefined
     ? `The ${entry.coin} stop-loss must cover the whole entry, sit on the losing side and be within ${maxDistancePct}% of the entry.`
     : `The ${entry.coin} stop-loss must cover the whole entry and sit on the losing side.`;
+}
+
+/** The cloids of the orders an action places (orders, and the replacement orders of modifies). */
+function placedCloids(intent: ActionIntent | undefined, wire: Wire | undefined): string[] {
+  const out: unknown[] = [];
+  if (wire) {
+    const orders: unknown[] =
+      wire.type === "order" && Array.isArray(wire.orders)
+        ? wire.orders
+        : wire.type === "modify"
+          ? [wire.order]
+          : wire.type === "batchModify" && Array.isArray(wire.modifies)
+            ? (wire.modifies as Array<{ order?: unknown }>).map((m) => m.order)
+            : [];
+    for (const o of orders) if (typeof o === "object" && o !== null) out.push((o as { c?: unknown }).c);
+  } else if (intent?.kind === "order") {
+    out.push(intent.cloid, intent.takeProfit?.cloid, intent.stopLoss?.cloid);
+  } else if (intent?.kind === "modify") {
+    out.push(intent.order.cloid);
+  }
+  return out.filter((c): c is string => typeof c === "string");
 }
 
 /** True for a cloid whose Kokoah tag names the bot origin: a bot's own order. */

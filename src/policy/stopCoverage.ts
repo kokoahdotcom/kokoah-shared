@@ -30,10 +30,13 @@ export interface AccountOrder {
   reduceOnly: boolean;
   /** A position TP/SL: closes the whole position, whatever its size. */
   positionTpsl: boolean;
-  /** A market trigger (Hyperliquid "Stop Market", wire `isMarket`): it executes at market when it fires. */
-  isMarket?: boolean;
+  /**
+   * A market trigger (Hyperliquid "Stop Market", wire `isMarket`): it executes at market when it fires. Required, like
+   * `limitPrice`, so a caller that doesn't read them fails to compile rather than have every stop-limit stop counting.
+   */
+  isMarket: boolean;
   /** Limit price (Hyperliquid `limitPx`, wire `p`): what a limit trigger executes at once it fires. */
-  limitPrice?: number;
+  limitPrice: number | undefined;
 }
 
 /** An open position of the account (Hyperliquid `clearinghouseState`). */
@@ -247,28 +250,17 @@ export interface CoverageLeg {
 
 /**
  * Why the entries of an order action on `coin` would leave the position they add to only partly covered, or null when
- * they don't. The position is replayed as if every entry filled (at its limit or trigger, a market order at `mark`),
- * and must then be covered by the account's resting stop-losses together with the stop-losses the action places
- * itself. So an entry can't add to a position whose stops no longer cover it (an earlier stop left behind by a move of
- * the average entry, say), and two entries can't share one stop sized for one of them.
+ * they don't. Each side is replayed on its own at its worst: every buy entry filled and no sell entry, then every sell
+ * entry filled and no buy entry (at its limit or trigger, a market order at `mark`), since an entry on the other side
+ * may never fill. A side whose entries only shrink the position (a partial close with orders that aren't reduce-only)
+ * adds no risk and passes; otherwise the position it leaves must be covered by the account's resting stop-losses
+ * together with the stop-losses the action places itself. So an entry can't add to a position whose stops no longer
+ * cover it (an earlier stop left behind by a move of the average entry, say), two entries can't share one stop sized
+ * for one of them, and an opposite entry that never fills can't make a growing position look covered.
  */
 export function positionAfterEntriesProblem(input: { coin: string; legs: readonly CoverageLeg[]; book: AccountBook; mark?: number | undefined; maxStopLossDistancePct?: number | undefined }): string | null {
   const { coin } = input;
   const pos = input.book.positions.find((p) => p.coin === coin);
-  let size = pos?.size ?? 0;
-  let entry = pos?.entryPrice ?? 0;
-  for (const l of input.legs) {
-    if (l.coin !== coin || l.reduceOnly) continue;
-    const px = l.isTrigger ? l.triggerPrice : (l.price ?? input.mark);
-    if (px === undefined || !(px > 0) || !(l.size > 0)) return `Cannot check the stop-losses of the ${coin} position without a price for this order.`;
-    const delta = l.isBuy ? l.size : -l.size;
-    const next = size + delta;
-    if (size === 0 || Math.sign(size) === Math.sign(delta)) entry = (Math.abs(size) * entry + l.size * px) / Math.abs(next);
-    else if (Math.sign(next) !== Math.sign(size)) entry = px;
-    size = next;
-  }
-  const result: AccountPosition = { coin, size, entryPrice: entry };
-  if (!(Math.abs(size) > 1e-12)) return null;
   const placed: AccountOrder[] = [];
   for (const l of input.legs) {
     if (l.coin !== coin || !l.reduceOnly || !l.isTrigger || l.tpsl !== "sl") continue;
@@ -282,12 +274,32 @@ export function positionAfterEntriesProblem(input: { coin: string; legs: readonl
       tpsl: "sl",
       reduceOnly: true,
       positionTpsl: false,
-      ...(l.isMarket !== undefined ? { isMarket: l.isMarket } : {}),
-      ...(l.price !== undefined ? { limitPrice: l.price } : {}),
+      isMarket: l.isMarket === true,
+      limitPrice: l.price,
     });
   }
   const orders = [...input.book.orders, ...placed];
-  if (positionCovered(result, orders, input.maxStopLossDistancePct)) return null;
   const fmt = (x: number) => String(Math.round(x * 1e8) / 1e8);
-  return `Once this fills, the ${coin} position of ${fmt(Math.abs(size))} needs stop-losses${within(input.maxStopLossDistancePct)} for all of it; this order's stop and the resting ones cover ${fmt(coveredSize(result, orders, input.maxStopLossDistancePct))}. Place a stop for the rest first.`;
+  for (const buys of [true, false]) {
+    const entries = input.legs.filter((l) => l.coin === coin && !l.reduceOnly && l.isBuy === buys);
+    if (entries.length === 0) continue;
+    const start = pos?.size ?? 0;
+    let size = start;
+    let entry = pos?.entryPrice ?? 0;
+    for (const l of entries) {
+      const px = l.isTrigger ? l.triggerPrice : (l.price ?? input.mark);
+      if (px === undefined || !(px > 0) || !(l.size > 0)) return `Cannot check the stop-losses of the ${coin} position without a price for this order.`;
+      const delta = l.isBuy ? l.size : -l.size;
+      const next = size + delta;
+      if (size === 0 || Math.sign(size) === Math.sign(delta)) entry = (Math.abs(size) * entry + l.size * px) / Math.abs(next);
+      else if (Math.sign(next) !== Math.sign(size)) entry = px;
+      size = next;
+    }
+    // Only smaller, on the same side (or closed): risk taken off, not added.
+    if (Math.abs(size) <= 1e-12 || (Math.sign(size) === Math.sign(start) && Math.abs(size) <= Math.abs(start))) continue;
+    const result: AccountPosition = { coin, size, entryPrice: entry };
+    if (positionCovered(result, orders, input.maxStopLossDistancePct)) continue;
+    return `Once this fills, the ${coin} position of ${fmt(Math.abs(size))} needs stop-losses${within(input.maxStopLossDistancePct)} for all of it; this order's stop and the resting ones cover ${fmt(coveredSize(result, orders, input.maxStopLossDistancePct))}. Place a stop for the rest first.`;
+  }
+  return null;
 }
