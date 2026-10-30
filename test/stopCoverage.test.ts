@@ -120,6 +120,10 @@ describe("stop coverage (stops required)", () => {
     expect(check(cancel(11, "BTC", "bot"), { policy: bots, accountBook: book({ orders: [botStop] }) }).allowed).toBe(true);
     expect(check({ kind: "cancel", cancels: [{ coin: "BTC", cloid: botCloid }], origin: "bot" } as ActionIntentInput, { policy: bots, accountBook: book({ orders: [botStop] }) }).allowed).toBe(true);
     expect(check({ kind: "cancel", cancels: [{ coin: "BTC", cloid: botCloid }], origin: "bot" } as ActionIntentInput, { policy: bots, accountBook: book({ orders: [] }) }).allowed).toBe(true);
+    // Naming only its own orders by cloid, it needs no account read; naming any other, it does.
+    expect(check({ kind: "cancel", cancels: [{ coin: "BTC", cloid: botCloid }], origin: "bot" } as ActionIntentInput, { policy: bots, accountBook: undefined }).allowed).toBe(true);
+    expect(codes(check({ kind: "cancel", cancels: [{ coin: "BTC", cloid: botCloid }, { coin: "BTC", cloid: CLOID }], origin: "bot" } as ActionIntentInput, { policy: bots, accountBook: undefined }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(codes(check(cancel(11, "BTC", "bot"), { policy: bots, accountBook: undefined }))).toEqual(["STOP_LOSS_REQUIRED"]);
     // Only for bots the policy exempts, and only for bots.
     expect(codes(check(cancel(11, "BTC", "guardian"), { policy: bots, accountBook: book({ orders: [botStop] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
     expect(codes(check(cancel(11, "BTC", "bot"), { policy: { ...bots, botEntriesWithoutStopLoss: false }, accountBook: book({ orders: [botStop] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
