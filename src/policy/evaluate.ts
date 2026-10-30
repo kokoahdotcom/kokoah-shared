@@ -4,13 +4,16 @@
  *    config, TWAP) are denied with a specific code even if a policy lists them. One exception: `setReferrer` carrying
  *    exactly the policy's `referralCode`, for the main account (a raw wire action only);
  * 2. anything not in the policy's allow-list is denied;
- * 3. per-action limits: coins, notional, daily notional, leverage, stop-loss requirement (origin `bot` is exempt only
- *    when the policy says `botEntriesWithoutStopLoss`), orders per minute, isolated margin (automation only adds it, at
- *    most `maxOrderNotionalUsd` at a time, counted toward the daily notional and the per-minute rate),
+ * 3. per-action limits: coins, notional, daily notional, leverage, stop-loss requirement (a stop-limit counts only when
+ *    its limit can fill, see `stopCoverage.ts`; origin `bot` is exempt only when the policy says
+ *    `botEntriesWithoutStopLoss`, and then only for its entries and its own orders), orders per minute, isolated
+ *    margin (automation only adds it, at most `maxOrderNotionalUsd` at a time, counted toward the daily notional and
+ *    the per-minute rate),
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
  *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
- *    `scheduleCancel` at most 1 h ahead, and (with `requireStopCoverage`) no cancel or modify that leaves a position's
- *    required stop-loss behind, and no `scheduleCancel` set at all;
+ *    `scheduleCancel` at most 1 h ahead, and (with `requireStopCoverage`) no cancel or modify that takes stop-loss
+ *    cover away from a position, no entry that leaves the position it adds to partly covered, and no `scheduleCancel`
+ *    set at all;
  * 4. spot: denied unless the pair is in `allowedSpotCoins`, and then only as one plain order (IOC, or with
  *    `spotTrading` also GTC and post-only limits within the bands), with the builder on sells and none on buys
  *    (Hyperliquid charges builder fees on spot sells only). Spot legs are exempt from the leverage, stop-loss and
@@ -21,13 +24,14 @@
  *
  * @module
  */
+import { parseCloid } from "../actions/cloid.js";
 import { type CompiledAction, SCHEDULE_CANCEL_MAX_LEAD_MS } from "../actions/compile.js";
 import type { ActionIntent, IntentOrigin } from "../intents/index.js";
 import { decodeAssetId, parseCoin } from "../markets/assetIds.js";
 import type { MarketRegistry } from "../markets/registry.js";
 import { checkLimitPriceBand, checkTriggerPriceBand, type LimitTif, triggerLimitBandProblem } from "./band.js";
 import type { Policy } from "./schema.js";
-import { type AccountBook, STOP_COVERAGE_ACTION_TYPES, stopCoverageProblems } from "./stopCoverage.js";
+import { type AccountBook, namedOrderRefs, positionAfterEntriesProblem, STOP_COVERAGE_ACTION_TYPES, stopCanFill, stopCoverageProblems } from "./stopCoverage.js";
 import { DENIED_ACTION_TYPES, DENIED_MESSAGES, type PolicyViolationCode } from "./types.js";
 import { isAddress, wireActionProblems } from "./wire.js";
 
@@ -91,11 +95,13 @@ export interface PolicyContext {
   /** Current leverage setting per coin, when known. */
   leverageByCoin?: Readonly<Record<string, number>>;
   /**
-   * With `policy.requireStopLossForNewEntries`, cancels and modifies (the exact wire action) must not leave a position
-   * that had a stop-loss without one (`stopCoverage.ts`), checked against `accountBook`; without it they are
-   * `STOP_LOSS_REQUIRED`, and so is setting a `scheduleCancel` (it would cancel every stop-loss when it fires; clearing
-   * one stays allowed). For signers that read the traded account's positions and orders themselves (the signer
-   * service); others leave it unset. Origin `bot` is exempt when the policy says `botEntriesWithoutStopLoss`.
+   * With `policy.requireStopLossForNewEntries`, cancels and modifies (the exact wire action) must not take stop-loss
+   * cover away from a position, and an order's entries must leave the whole position they add to covered
+   * (`stopCoverage.ts`), checked against `accountBook`; without it they are `STOP_LOSS_REQUIRED`, and so is setting a
+   * `scheduleCancel` (it would cancel every stop-loss when it fires; clearing one stays allowed). For signers that read
+   * the traded account's positions and orders themselves (the signer service, the signer frame); others leave it
+   * unset. Where the policy says `botEntriesWithoutStopLoss`, origin `bot` is exempt for its entries, and its cancels
+   * and modifies only for orders whose cloid carries the bot origin (its own).
    */
   requireStopCoverage?: boolean;
   /** The traded account's positions and resting orders on the markets the action touches, read by the signer itself. */
@@ -127,6 +133,8 @@ interface OrderLeg {
   reduceOnly: boolean;
   /** A spot market (asset id 10000–99999, or a spot coin name on intents). */
   spot: boolean;
+  /** A market trigger (wire `isMarket`; stopMarket, takeProfitMarket and market TP/SL legs on intents). */
+  isMarket?: boolean;
   /** Market intents: slippage in bps. */
   slippageBps?: number;
   /** Limit orders: time in force (intents default to GTC). */
@@ -297,19 +305,33 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
       break;
   }
 
-  // Stops required: a cancel or modify must not take a position's stop-loss away afterwards, and a dead man's switch
-  // (which cancels every open order, stop-losses included, when it fires) is never set; clearing one is fine.
+  // Stops required: a cancel or modify must not take stop-loss cover away from a position afterwards, and a dead man's
+  // switch (which cancels every open order, stop-losses included, when it fires) is never set; clearing one is fine.
+  // Bots the policy lets trade without stops may still cancel and change their own orders (bot-origin cloids), never
+  // the user's or a guardian's stops.
   const botExempt = origin === "bot" && policy.botEntriesWithoutStopLoss === true;
-  const stopsGuarded = context.requireStopCoverage === true && policy.requireStopLossForNewEntries && !botExempt;
+  const stopsGuarded = context.requireStopCoverage === true && policy.requireStopLossForNewEntries;
   if (stopsGuarded && actionType === "scheduleCancel") {
     const time = wire ? wire.time : intent?.kind === "scheduleCancel" ? intent.time : undefined;
     if (time !== undefined && time !== null) add("STOP_LOSS_REQUIRED", "A scheduled cancel-all would also cancel the stop-losses this policy requires.");
   }
-  if (stopsGuarded && wire !== undefined && STOP_COVERAGE_ACTION_TYPES.includes(actionType)) {
+  // An exempt bot's action that names only its own orders needs no account read.
+  const ownOrdersOnly = (w: Wire): boolean => {
+    const refs = namedOrderRefs(w);
+    return botExempt && refs.length > 0 && refs.every((r) => typeof r === "string" && isBotCloid(r));
+  };
+  if (stopsGuarded && wire !== undefined && STOP_COVERAGE_ACTION_TYPES.includes(actionType) && !ownOrdersOnly(wire)) {
     if (!context.accountBook || !context.registry) {
       add("STOP_LOSS_REQUIRED", "The account's open positions and stop-losses could not be checked, so no order is cancelled or changed.");
     } else {
-      for (const p of stopCoverageProblems({ action: wire, book: context.accountBook, registry: context.registry, maxStopLossDistancePct: policy.maxStopLossDistancePct })) add("STOP_LOSS_REQUIRED", p);
+      const problems = stopCoverageProblems({
+        action: wire,
+        book: context.accountBook,
+        registry: context.registry,
+        maxStopLossDistancePct: policy.maxStopLossDistancePct,
+        ...(botExempt ? { exempt: isBotCloid } : {}),
+      });
+      for (const p of problems) add("STOP_LOSS_REQUIRED", p);
     }
   }
 
@@ -426,14 +448,31 @@ function checkOrderLegs(
     // Bots manage their own exits: the user's signed `botEntriesWithoutStopLoss` exempts origin `bot` only.
     const botExempt = origin === "bot" && policy.botEntriesWithoutStopLoss === true;
     if (policy.requireStopLossForNewEntries && !botExempt) {
+      const failed = new Set<string>();
       for (const e of entries) {
         if (context.hasStopLoss?.(e.coin as string) === true) continue;
         if (actionType !== "order") {
           add("STOP_LOSS_REQUIRED", `${e.coin} has no stop-loss; modified entries need an existing exchange stop.`);
+          failed.add(e.coin as string);
           continue;
         }
         const problem = attachedStopProblem(e, legs, context.markPrices[e.coin as string], policy.maxStopLossDistancePct);
-        if (problem) add("STOP_LOSS_REQUIRED", problem);
+        if (problem) {
+          add("STOP_LOSS_REQUIRED", problem);
+          failed.add(e.coin as string);
+        }
+      }
+      // The whole position each entry adds to, as the signer read the account (`requireStopCoverage`).
+      if (context.requireStopCoverage === true && actionType === "order") {
+        for (const coin of new Set(entries.map((e) => e.coin as string))) {
+          if (failed.has(coin) || context.hasStopLoss?.(coin) === true) continue;
+          if (!context.accountBook) {
+            add("STOP_LOSS_REQUIRED", "The account's open positions and stop-losses could not be checked, so no position is opened or added to.");
+            break;
+          }
+          const problem = positionAfterEntriesProblem({ coin, legs, book: context.accountBook, mark: context.markPrices[coin], maxStopLossDistancePct: policy.maxStopLossDistancePct });
+          if (problem) add("STOP_LOSS_REQUIRED", problem);
+        }
       }
     }
   }
@@ -494,23 +533,37 @@ function checkSpotLegs(legs: OrderLeg[], actionType: string, wire: Wire | undefi
 
 /**
  * An entry is protected when an attached stop-loss leg (reduce-only, opposite side, same coin) covers its full size,
- * sits on the losing side of the entry and, when the policy sets `maxStopLossDistancePct`, is close enough to it.
+ * can fill when it fires (a market trigger, or a limit at or beyond its trigger), sits on the losing side of the entry
+ * and, when the policy sets `maxStopLossDistancePct`, is close enough to it.
  */
 function attachedStopProblem(entry: OrderLeg, legs: OrderLeg[], rawMark: number | undefined, maxDistancePct: number | undefined): string | null {
   const stops = legs.filter((l) => l.reduceOnly && l.isTrigger && l.tpsl === "sl" && l.coin === entry.coin && l.isBuy !== entry.isBuy);
   if (stops.length === 0) return `New ${entry.coin} entries need a stop-loss.`;
   const ref = entry.isTrigger ? entry.triggerPrice : (entry.price ?? rawMark);
+  let unfillable = false;
   for (const sl of stops) {
     if (!(sl.size >= entry.size)) continue;
     const t = sl.triggerPrice as number;
     if (ref === undefined || !(ref > 0)) return `Cannot check the ${entry.coin} stop-loss without an entry or mark price.`;
     if (!(entry.isBuy ? t < ref : t > ref)) continue;
     if (maxDistancePct !== undefined && !((Math.abs(ref - t) / ref) * 100 <= maxDistancePct + 1e-9)) continue;
+    if (!stopCanFill({ isBuy: sl.isBuy, triggerPrice: t, isMarket: sl.isMarket, limitPrice: sl.price })) {
+      unfillable = true;
+      continue;
+    }
     return null;
+  }
+  if (unfillable) {
+    return `The ${entry.coin} stop-loss's limit price must be at or beyond its trigger (at or below it for a sell, at or above it for a buy), or it may never fill.`;
   }
   return maxDistancePct !== undefined
     ? `The ${entry.coin} stop-loss must cover the whole entry, sit on the losing side and be within ${maxDistancePct}% of the entry.`
     : `The ${entry.coin} stop-loss must cover the whole entry and sit on the losing side.`;
+}
+
+/** True for a cloid whose Kokoah tag names the bot origin: a bot's own order. */
+function isBotCloid(cloid: string | undefined): boolean {
+  return cloid !== undefined && parseCloid(cloid)?.origin === "bot";
 }
 
 function intentActionType(intent: ActionIntent): string {
@@ -542,7 +595,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
     const raw: unknown[] =
       wire.type === "order" ? (wire.orders as unknown[]) : wire.type === "modify" ? [wire.order] : (wire.modifies as Array<{ order: unknown }>).map((m) => m.order);
     return raw.map((o) => {
-      const w = o as { a: number; b: boolean; p: string; s: string; r: boolean; t: { limit?: { tif: LimitTif }; trigger?: { triggerPx: string; tpsl: "tp" | "sl" } } };
+      const w = o as { a: number; b: boolean; p: string; s: string; r: boolean; t: { limit?: { tif: LimitTif }; trigger?: { isMarket?: boolean; triggerPx: string; tpsl: "tp" | "sl" } } };
       const trig = w.t.trigger;
       const tif = w.t.limit?.tif;
       return {
@@ -552,7 +605,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         price: Number(w.p),
         triggerPrice: trig ? Number(trig.triggerPx) : undefined,
         isTrigger: trig !== undefined,
-        ...(trig ? { tpsl: trig.tpsl } : {}),
+        ...(trig ? { tpsl: trig.tpsl, isMarket: trig.isMarket === true } : {}),
         ...(tif !== undefined ? { tif } : {}),
         reduceOnly: w.r,
         spot: isSpotAsset(w.a),
@@ -570,7 +623,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
       price: intent.price !== undefined ? Number(intent.price) : isTrigger && intent.triggerPrice !== undefined ? Number(intent.triggerPrice) : undefined,
       triggerPrice: intent.triggerPrice !== undefined ? Number(intent.triggerPrice) : undefined,
       isTrigger,
-      ...(isTrigger ? { tpsl: tpslOf(intent.orderType) } : {}),
+      ...(isTrigger ? { tpsl: tpslOf(intent.orderType), isMarket: intent.orderType === "stopMarket" || intent.orderType === "takeProfitMarket" } : {}),
       reduceOnly: intent.reduceOnly,
       spot: isSpotCoin(intent.coin),
       ...(intent.orderType === "market" ? { slippageBps: intent.slippageBps ?? 100 } : {}),
@@ -591,6 +644,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         triggerPrice: Number(leg.triggerPrice),
         isTrigger: true,
         tpsl,
+        isMarket: leg.orderType !== "limit",
         reduceOnly: true,
         spot: parent.spot,
       });
@@ -608,7 +662,7 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         price: o.price !== undefined ? Number(o.price) : o.triggerPrice !== undefined ? Number(o.triggerPrice) : undefined,
         triggerPrice: o.triggerPrice !== undefined ? Number(o.triggerPrice) : undefined,
         isTrigger,
-        ...(isTrigger ? { tpsl: tpslOf(o.orderType) } : { tif: o.tif ?? "Gtc" }),
+        ...(isTrigger ? { tpsl: tpslOf(o.orderType), isMarket: o.orderType === "stopMarket" || o.orderType === "takeProfitMarket" } : { tif: o.tif ?? "Gtc" }),
         reduceOnly: o.reduceOnly,
         spot: isSpotCoin(o.coin),
       },

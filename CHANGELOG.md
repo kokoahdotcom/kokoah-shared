@@ -100,6 +100,21 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   (checked against a new Python SDK golden vector).
 
 ### Fixed
+- `policy` stop coverage (`requireStopCoverage`, under `requireStopLossForNewEntries`):
+  - a stop-limit counts as a stop-loss only when it can fill when it fires (`stopCanFill`: a market trigger, or a limit
+    at or beyond its trigger on the closing side), for an entry's attached stop and for resting stops alike. A sell stop
+    at 90 with a limit of 99 used to count. `AccountOrder` gains `isMarket` and `limitPrice`; without them a stop-limit
+    doesn't count;
+  - a cancel or modify may not take any cover from a position (`coveredSize`), also when it is only partly covered.
+    Before, only a fully covered position was kept covered, so all stops of a partly covered one could be cancelled;
+  - an order's entries must leave the whole position they add to covered by the resting stops and the action's own
+    (`positionAfterEntriesProblem`), with `accountBook` read for entries too;
+  - a cancel or modify naming an order that is neither in `accountBook.orders` nor in the new `accountBook.notStops`
+    (orders the signer looked up and found closed, or not a perp stop-loss) is refused: it may sit on a market the
+    signer didn't read;
+  - with `botEntriesWithoutStopLoss`, origin `bot` is exempt for its entries and for its own orders (bot-origin
+    cloids) only: its cancels and modifies of other stops, and its `scheduleCancel`, are checked like everyone else's.
+    An action that names only its own orders by cloid (`namedOrderRefs`) needs no `accountBook`.
 - `parseDec` (and so every decimal in intents and policies) refuses strings longer than `MAX_DECIMAL_LENGTH` (40)
   characters before parsing, without echoing them, and `normalize` strips trailing zeros in one step: a caller's 250 KB
   `"1.000…"` took seconds of BigInt work per value.
