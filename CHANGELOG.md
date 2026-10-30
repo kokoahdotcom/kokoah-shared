@@ -109,8 +109,9 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
     Before, only a fully covered position was kept covered, so all stops of a partly covered one could be cancelled;
   - an order's entries must leave the whole position they add to covered by the resting stops and the action's own
     (`positionAfterEntriesProblem`), with `accountBook` read for entries too;
-  - a cancel or modify naming an order that is neither in `accountBook.orders` nor in the new `accountBook.closed` is
-    refused (it may sit on a market the signer didn't read);
+  - a cancel or modify naming an order that is neither in `accountBook.orders` nor in the new `accountBook.notStops`
+    (orders the signer looked up and found closed, or not a perp stop-loss) is refused: it may sit on a market the
+    signer didn't read;
   - with `botEntriesWithoutStopLoss`, origin `bot` is exempt for its entries and for its own orders (bot-origin
     cloids) only: its cancels and modifies of other stops, and its `scheduleCancel`, are checked like everyone else's.
 - `parseDec` (and so every decimal in intents and policies) refuses strings longer than `MAX_DECIMAL_LENGTH` (40)

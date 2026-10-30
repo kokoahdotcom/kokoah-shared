@@ -58,8 +58,8 @@ describe("stop coverage (stops required)", () => {
   it("allows cancelling other orders, a second stop, and the stop of a position that is gone", () => {
     expect(check(cancel(13)).allowed).toBe(true);
     expect(check(cancel(20, "ETH")).allowed).toBe(true);
-    // An order the signer found closed on Hyperliquid (filled, canceled) takes nothing away.
-    expect(check(cancel(999), { accountBook: book({ closed: [999] }) }).allowed).toBe(true);
+    // An order the signer looked up and found closed on Hyperliquid (filled, canceled) takes nothing away.
+    expect(check(cancel(999), { accountBook: book({ notStops: [999] }) }).allowed).toBe(true);
     const positionStop: AccountOrder = { coin: "BTC", oid: 12, isBuy: false, size: 0, isTrigger: true, triggerPrice: 97_000, tpsl: "sl", reduceOnly: true, positionTpsl: true, isMarket: true };
     expect(check(cancel(11), { accountBook: book({ orders: [...book().orders, positionStop] }) }).allowed).toBe(true);
     expect(check(cancel(11), { accountBook: book({ positions: [] }) }).allowed).toBe(true);
@@ -187,7 +187,7 @@ describe("stop coverage (stops required)", () => {
     expect(codes(check({ kind: "cancel", cancels: [{ coin: "BTC", cloid: generateCloid("guardian") }], origin: "guardian" } as ActionIntentInput))).toEqual(["STOP_LOSS_REQUIRED"]);
     expect(codes(check({ ...moveStop(), target: { oid: 998 } } as ActionIntentInput))).toEqual(["STOP_LOSS_REQUIRED"]);
     const gone = generateCloid("guardian");
-    expect(check({ kind: "cancel", cancels: [{ coin: "BTC", cloid: gone }], origin: "guardian" } as ActionIntentInput, { accountBook: book({ closed: [gone.toUpperCase()] }) }).allowed).toBe(true);
+    expect(check({ kind: "cancel", cancels: [{ coin: "BTC", cloid: gone }], origin: "guardian" } as ActionIntentInput, { accountBook: book({ notStops: [gone.toUpperCase()] }) }).allowed).toBe(true);
   });
 });
 
