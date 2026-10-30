@@ -114,6 +114,7 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
     signer didn't read;
   - with `botEntriesWithoutStopLoss`, origin `bot` is exempt for its entries and for its own orders (bot-origin
     cloids) only: its cancels and modifies of other stops, and its `scheduleCancel`, are checked like everyone else's.
+    An action that names only its own orders by cloid (`namedOrderRefs`) needs no `accountBook`.
 - `parseDec` (and so every decimal in intents and policies) refuses strings longer than `MAX_DECIMAL_LENGTH` (40)
   characters before parsing, without echoing them, and `normalize` strips trailing zeros in one step: a caller's 250 KB
   `"1.000…"` took seconds of BigInt work per value.
