@@ -31,7 +31,7 @@ import { decodeAssetId, parseCoin } from "../markets/assetIds.js";
 import type { MarketRegistry } from "../markets/registry.js";
 import { checkLimitPriceBand, checkTriggerPriceBand, type LimitTif, triggerLimitBandProblem } from "./band.js";
 import type { Policy } from "./schema.js";
-import { type AccountBook, positionAfterEntriesProblem, STOP_COVERAGE_ACTION_TYPES, stopCanFill, stopCoverageProblems } from "./stopCoverage.js";
+import { type AccountBook, namedOrderRefs, positionAfterEntriesProblem, STOP_COVERAGE_ACTION_TYPES, stopCanFill, stopCoverageProblems } from "./stopCoverage.js";
 import { DENIED_ACTION_TYPES, DENIED_MESSAGES, type PolicyViolationCode } from "./types.js";
 import { isAddress, wireActionProblems } from "./wire.js";
 
@@ -315,7 +315,12 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
     const time = wire ? wire.time : intent?.kind === "scheduleCancel" ? intent.time : undefined;
     if (time !== undefined && time !== null) add("STOP_LOSS_REQUIRED", "A scheduled cancel-all would also cancel the stop-losses this policy requires.");
   }
-  if (stopsGuarded && wire !== undefined && STOP_COVERAGE_ACTION_TYPES.includes(actionType)) {
+  // An exempt bot's action that names only its own orders needs no account read.
+  const ownOrdersOnly = (w: Wire): boolean => {
+    const refs = namedOrderRefs(w);
+    return botExempt && refs.length > 0 && refs.every((r) => typeof r === "string" && isBotCloid(r));
+  };
+  if (stopsGuarded && wire !== undefined && STOP_COVERAGE_ACTION_TYPES.includes(actionType) && !ownOrdersOnly(wire)) {
     if (!context.accountBook || !context.registry) {
       add("STOP_LOSS_REQUIRED", "The account's open positions and stop-losses could not be checked, so no order is cancelled or changed.");
     } else {

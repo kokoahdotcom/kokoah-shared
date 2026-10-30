@@ -59,6 +59,16 @@ export interface AccountBook {
 /** Action types {@link stopCoverageProblems} checks: the ones that can take a resting stop away. */
 export const STOP_COVERAGE_ACTION_TYPES: readonly string[] = Object.freeze(["cancel", "cancelByCloid", "modify", "batchModify"]);
 
+/** The orders a cancel or modify (wire action) names: oids and cloids as written. Other action types name none. */
+export function namedOrderRefs(action: { type: string } & Record<string, unknown>): unknown[] {
+  if ((action.type === "cancel" || action.type === "cancelByCloid") && Array.isArray(action.cancels)) {
+    return (action.cancels as Array<Record<string, unknown>>).map((c) => (action.type === "cancel" ? c.o : c.cloid));
+  }
+  if (action.type === "modify") return [action.oid];
+  if (action.type === "batchModify" && Array.isArray(action.modifies)) return (action.modifies as Array<{ oid?: unknown }>).map((m) => m.oid);
+  return [];
+}
+
 type WireOrder = { a?: unknown; b?: unknown; p?: unknown; s?: unknown; r?: unknown; t?: { trigger?: { isMarket?: unknown; triggerPx?: unknown; tpsl?: unknown } } };
 
 const sameCloid = (a: string | undefined, b: unknown): boolean => a !== undefined && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
