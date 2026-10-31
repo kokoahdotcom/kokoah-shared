@@ -18,7 +18,7 @@ const book = (over: Partial<AccountBook> = {}): AccountBook => ({
   orders: [
     stop,
     { coin: "BTC", oid: 13, isBuy: false, size: 0.5, isTrigger: true, triggerPrice: 110_000, tpsl: "tp", reduceOnly: true, positionTpsl: false, isMarket: true, limitPrice: 99_000 },
-    { coin: "ETH", oid: 20, isBuy: true, size: 1, isTrigger: false, reduceOnly: false, positionTpsl: false },
+    { coin: "ETH", oid: 20, isBuy: true, size: 1, isTrigger: false, reduceOnly: false, positionTpsl: false, isMarket: false, limitPrice: 2_900 },
   ],
   ...over,
 });
@@ -60,7 +60,7 @@ describe("stop coverage (stops required)", () => {
     expect(check(cancel(20, "ETH")).allowed).toBe(true);
     // An order the signer looked up and found closed on Hyperliquid (filled, canceled) takes nothing away.
     expect(check(cancel(999), { accountBook: book({ notStops: [999] }) }).allowed).toBe(true);
-    const positionStop: AccountOrder = { coin: "BTC", oid: 12, isBuy: false, size: 0, isTrigger: true, triggerPrice: 97_000, tpsl: "sl", reduceOnly: true, positionTpsl: true, isMarket: true };
+    const positionStop: AccountOrder = { coin: "BTC", oid: 12, isBuy: false, size: 0, isTrigger: true, triggerPrice: 97_000, tpsl: "sl", reduceOnly: true, positionTpsl: true, isMarket: true, limitPrice: 87_300 };
     expect(check(cancel(11), { accountBook: book({ orders: [...book().orders, positionStop] }) }).allowed).toBe(true);
     expect(check(cancel(11), { accountBook: book({ positions: [] }) }).allowed).toBe(true);
     // Two stops of half the size each cover it together; one alone doesn't.
@@ -236,5 +236,94 @@ describe("stop coverage of the whole position on entries (stops required)", () =
   it("leaves closing orders alone", () => {
     const close: ActionIntentInput = { kind: "order", coin: "BTC", side: "sell", orderType: "market", size: "0.5", reduceOnly: true, origin: "guardian" } as ActionIntentInput;
     expect(check(close, { accountBook: undefined }).allowed).toBe(true);
+  });
+
+  it("replays each side at its worst: an opposite entry that never fills can't make a growing position look covered", () => {
+    // Long 1 BTC with no stop. One action: buy 0.01 with a stop for it, and a resting sell of 0.5 above the market with
+    // a buy stop for that. All filled, the position would shrink to 0.51; but the sell may never fill.
+    const order = (o: Record<string, unknown>) => ({ a: 0, r: false, ...o });
+    const wire = {
+      type: "order",
+      orders: [
+        order({ b: true, p: "100000", s: "0.01", t: { limit: { tif: "Gtc" } } }),
+        order({ b: false, p: "85500", s: "0.01", r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } }),
+        order({ b: false, p: "105000", s: "0.5", t: { limit: { tif: "Gtc" } } }),
+        order({ b: true, p: "121000", s: "0.5", r: true, t: { trigger: { isMarket: true, triggerPx: "110000", tpsl: "sl" } } }),
+      ],
+      grouping: "na",
+      builder: { b: BUILDER.address, f: 25 },
+    };
+    const uncovered = book({ positions: [{ coin: "BTC", size: 1, entryPrice: 100_000 }], orders: [] });
+    const d = evaluatePolicy({ kind: "wire", action: wire, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ accountBook: uncovered }));
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(d.violations[0]!.message).toContain("the BTC position of 1.01 needs stop-losses");
+  });
+
+  it("lets a partial close with an order that isn't reduce-only through, and a flip that leaves the new side covered", () => {
+    // Long 1 BTC with no stop: selling 0.3 of it only takes risk off.
+    const uncovered = book({ positions: [{ coin: "BTC", size: 1, entryPrice: 100_000 }], orders: [] });
+    const sell = (size: string) => ({ kind: "order", coin: "BTC", side: "sell", orderType: "limit", size, price: "100000", stopLoss: { triggerPrice: "104000" }, origin: "guardian" }) as ActionIntentInput;
+    expect(check(sell("0.3"), { accountBook: uncovered }).allowed).toBe(true);
+    // Long 0.3 to a short of 0.2, covered by the order's own stop.
+    expect(check(sell("0.5"), { accountBook: book({ positions: [{ coin: "BTC", size: 0.3, entryPrice: 100_000 }], orders: [] }) }).allowed).toBe(true);
+    // Adding to the uncovered long stays refused.
+    expect(codes(check({ ...sell("0.3"), side: "buy", stopLoss: { triggerPrice: "96000" } } as ActionIntentInput, { accountBook: uncovered }))).toEqual(["STOP_LOSS_REQUIRED"]);
+  });
+
+  it("allows a batchModify that moves cover between the stops of a partly covered position, not one that lowers it", () => {
+    // Long 1 BTC with stops of 0.5 (oid 11) and 0.3 (oid 14): 0.8 covered.
+    const partly = book({ positions: [{ coin: "BTC", size: 1, entryPrice: 100_000 }], orders: [stop, { ...stop, oid: 14, cloid: undefined, size: 0.3 }] });
+    const stopWire = (s: string) => ({ a: 0, b: false, p: "85500", s, r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } });
+    const batch = (a: string, b: string) => ({ type: "batchModify", modifies: [{ oid: 11, order: stopWire(a) }, { oid: 14, order: stopWire(b) }] });
+    const run = (a: string, b: string) => evaluatePolicy({ kind: "wire", action: batch(a, b), expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ accountBook: partly }));
+    expect(run("0.3", "0.5").allowed).toBe(true);
+    expect(codes(run("0.3", "0.3"))).toEqual(["STOP_LOSS_REQUIRED"]);
+  });
+
+  it("refuses an exempt bot cancelling its own stop together with the user's", () => {
+    const bots: Policy = { ...policy, allowedOrigins: ["guardian", "bot"], botEntriesWithoutStopLoss: true };
+    const botStop: AccountOrder = { ...stop, oid: 15, cloid: generateCloid("bot") };
+    const both = book({ orders: [stop, botStop] });
+    const cancelBoth = { kind: "cancel", cancels: [{ coin: "BTC", oid: 11 }, { coin: "BTC", oid: 15 }], origin: "bot" } as ActionIntentInput;
+    expect(codes(check(cancelBoth, { policy: bots, accountBook: both }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(check(cancel(15, "BTC", "bot"), { policy: bots, accountBook: both }).allowed).toBe(true);
+  });
+
+  it("lets only a bot place an order whose cloid carries the bot origin", () => {
+    const bots: Policy = { ...policy, allowedOrigins: ["guardian", "bot"], botEntriesWithoutStopLoss: true };
+    const tagged = (origin: string) =>
+      ({ kind: "order", coin: "BTC", side: "sell", orderType: "stopMarket", size: "0.5", triggerPrice: "95000", reduceOnly: true, cloid: generateCloid("bot"), origin }) as ActionIntentInput;
+    expect(codes(check(tagged("guardian"), { policy: bots }))).toEqual(["ORIGIN_NOT_ALLOWED"]);
+    expect(evaluatePolicy(parseActionIntent(tagged("guardian")), ctx({ policy: bots })).violations.map((v) => v.code)).toEqual(["ORIGIN_NOT_ALLOWED"]);
+    expect(check(tagged("bot"), { policy: bots }).allowed).toBe(true);
+    const move = { ...moveStop(), order: { ...(moveStop() as unknown as { order: Record<string, unknown> }).order, cloid: generateCloid("bot") } } as unknown as ActionIntentInput;
+    expect(codes(check(move, { policy: bots }))).toEqual(["ORIGIN_NOT_ALLOWED"]);
+  });
+
+  it("measures the stops' distance from the worst entry price the fills could give, not the all-filled average", () => {
+    // Max 5%. Long 1 BTC from 100,000 with no stop. One action: buy 0.01 at 100,000 with a stop at 96,000; a far buy of
+    // 1 at 85,000 with a stop at 81,000; a reduce-only sell stop for 2 at 88,500. All filled: 2.01 at about 92,500, the
+    // 88,500 stop 4.3% below. If the far buy never fills: 1.01 at 100,000 with stops 11.5% and 19% away.
+    const tight: Policy = { ...policy, maxStopLossDistancePct: 5 };
+    const stopWire = (s: string, triggerPx: string, p: string) => ({ a: 0, b: false, p, s, r: true, t: { trigger: { isMarket: true, triggerPx, tpsl: "sl" } } });
+    const wire = {
+      type: "order",
+      orders: [
+        { a: 0, b: true, p: "100000", s: "0.01", r: false, t: { limit: { tif: "Gtc" } } },
+        stopWire("0.01", "96000", "86400"),
+        { a: 0, b: true, p: "85000", s: "1", r: false, t: { limit: { tif: "Gtc" } } },
+        stopWire("1", "81000", "72900"),
+        stopWire("2", "88500", "79650"),
+      ],
+      grouping: "na",
+      builder: { b: BUILDER.address, f: 25 },
+    };
+    const uncovered = book({ positions: [{ coin: "BTC", size: 1, entryPrice: 100_000 }], orders: [] });
+    const d = evaluatePolicy({ kind: "wire", action: wire, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ policy: tight, accountBook: uncovered }));
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(d.violations[0]!.message).toContain("the BTC position of 2.01 needs stop-losses within 5% of its entry");
+    // Stops within 5% of the highest price any fill could give (100,000) cover it.
+    const near = { ...wire, orders: [wire.orders[0], wire.orders[1], wire.orders[2], stopWire("1", "81000", "72900"), stopWire("2", "95500", "85950")] };
+    expect(evaluatePolicy({ kind: "wire", action: near, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ policy: tight, accountBook: uncovered })).allowed).toBe(true);
   });
 });
