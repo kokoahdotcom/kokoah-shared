@@ -66,9 +66,10 @@ export interface AccountBook {
   positions: readonly AccountPosition[];
   orders: readonly AccountOrder[];
   /**
-   * Orders the action names that the signer looked up on Hyperliquid on their own and found can't be a stop-loss of any
-   * position (closed: filled, canceled or never placed; or open but not a perp stop-loss), by oid or lowercase cloid:
-   * naming one takes nothing away. Every other order a cancel or modify names must be in `orders`.
+   * Orders the action names that the signer looked up on Hyperliquid on their own and found can't take stop-loss cover
+   * away (closed: filled, canceled or never placed; or open but neither a perp stop-loss nor a partly filled entry with
+   * an attached stop-loss), by oid or lowercase cloid: naming one takes nothing away. Every other order a cancel or
+   * modify names must be in `orders`.
    */
   notStops?: ReadonlyArray<number | string>;
 }
@@ -111,6 +112,21 @@ export function stopCanFill(o: { isBuy: boolean; triggerPrice?: number | undefin
   const l = o.limitPrice;
   if (t === undefined || l === undefined || !(t > 0) || !(l > 0)) return false;
   return o.isBuy ? l > t : l < t;
+}
+
+/**
+ * The oids of the stop-losses attached to the book's entries that haven't filled completely. They aren't placed, so they
+ * cover nothing yet, also should Hyperliquid list them as orders of their own.
+ */
+function waitingStops(orders: readonly AccountOrder[]): ReadonlySet<number> {
+  const waiting = new Set<number>();
+  for (const o of orders) if (Array.isArray(o.attachedStops)) for (const oid of o.attachedStops) waiting.add(oid);
+  return waiting;
+}
+
+/** `orders` without those in `waiting` (see {@link waitingStops}). */
+function placedOnly(orders: readonly AccountOrder[], waiting: ReadonlySet<number>): AccountOrder[] {
+  return waiting.size === 0 ? [...orders] : orders.filter((o) => !waiting.has(o.oid));
 }
 
 /** True when `o` is a stop-loss that counts toward the cover of `p` (see the module notes). */
@@ -229,8 +245,10 @@ export function stopCoverageProblems(input: {
   }
   // Changes to free targets count as already made, so only the others are compared.
   const apply = (only?: ReadonlySet<number>) => book.orders.flatMap((o, i) => (only !== undefined && !only.has(i) ? [o] : removed.has(i) ? [] : [replaced.get(i) ?? o]));
-  const before = apply(free);
-  const after = apply();
+  // Attached stops still waiting for their entry to fill never count, before or after.
+  const waiting = waitingStops(book.orders);
+  const before = placedOnly(apply(free), waiting);
+  const after = placedOnly(apply(), waiting);
   const problems: string[] = [];
   if (missing.length > 0) {
     const shown = missing.slice(0, 5).join(", ");
@@ -243,7 +261,7 @@ export function stopCoverageProblems(input: {
   const dropped = new Map<string, { isBuy: boolean; stops: Set<number> }>();
   for (const i of [...removed, ...replaced.keys()]) {
     const o = book.orders[i]!;
-    const stops = o.attachedStops ?? [];
+    const stops = Array.isArray(o.attachedStops) ? o.attachedStops : [];
     if (free.has(i) || o.reduceOnly || !(o.filledSize > 0) || stops.length === 0) continue;
     const key = `${o.coin}|${o.isBuy}`;
     const entry = dropped.get(key) ?? { isBuy: o.isBuy, stops: new Set<number>() };
@@ -262,11 +280,11 @@ export function stopCoverageProblems(input: {
       );
       continue;
     }
-    // A partly filled entry on the position's side: its attached stop-loss goes with it (and never counts while it
-    // waits; should Hyperliquid list it as an order of its own, it is left out too).
+    // A partly filled entry on the position's side: its attached stop-loss goes with it (it never counts while it
+    // waits: `placedOnly`).
     const lost = dropped.get(`${p.coin}|${p.size > 0}`);
     if (lost === undefined) continue;
-    if (positionCovered(p, after.filter((o) => !lost.stops.has(o.oid)), max)) continue;
+    if (positionCovered(p, after, max)) continue;
     problems.push(
       `Cancelling or changing the partly filled ${p.coin} order would also cancel the stop-loss attached to it (Hyperliquid places that only once the order fills completely), leaving the open ${p.coin} position without a full stop-loss${within(max)}; place a stop for the position first.`,
     );
@@ -323,7 +341,7 @@ export function positionAfterEntriesProblem(input: { coin: string; legs: readonl
       attachedStops: [],
     });
   }
-  const orders = [...input.book.orders, ...placed];
+  const orders = [...placedOnly(input.book.orders, waitingStops(input.book.orders)), ...placed];
   const fmt = (x: number) => String(Math.round(x * 1e8) / 1e8);
   for (const buys of [true, false]) {
     const entries = input.legs.filter((l) => l.coin === coin && !l.reduceOnly && l.isBuy === buys);
