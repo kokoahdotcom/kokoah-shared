@@ -82,7 +82,8 @@ const SECRET_KEYS =
   "password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key|apikey|x-api-key|authorization|auth|cookie|set-cookie|session|signature|private[_-]?key|privatekey|mnemonic|seed|hmac|kek|credential|credentials";
 
 /** A word as recovery phrases are compared: lowercase, with accents and other marks taken off (BIP-39 uses NFKD). */
-const foldWord = (w: string): string => (/^[A-Za-z]+$/.test(w) ? w.toLowerCase() : w.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase());
+const foldWord = (w: string): string =>
+  /^[A-Za-z]+$/.test(w) ? w.toLowerCase() : /^[\u4e00-\u9fff]+$/.test(w) ? w : w.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 
 /**
  * BIP-39's ten word lists (English, which Ethereum and Bittensor wallets use, and the Spanish, French, Italian,
@@ -92,6 +93,8 @@ const foldWord = (w: string): string => (/^[A-Za-z]+$/.test(w) ? w.toLowerCase()
 const PHRASE_LISTS: readonly ReadonlySet<string>[] = [english, spanish, french, italian, portuguese, czech, japanese, korean, simplifiedChinese, traditionalChinese].map(
   (list) => new Set(list.map(foldWord)),
 );
+/** The Japanese, Korean and both Chinese lists (bits of {@link PHRASE_LISTS}): their words are often one character. */
+const CJK_LISTS = (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9);
 /** This many of those words in a row are taken for a recovery phrase (or part of one): ordinary text seldom has them. */
 export const PHRASE_RUN = 6;
 /**
@@ -99,27 +102,41 @@ export const PHRASE_RUN = 6;
  * `"\n12. "`, `" | "`, `"-"`, a JSON array's `",\n    "`, a table's `" | 7 | "`).
  */
 const PHRASE_GAP = 16;
+/** Numbering a list puts before a word: `12.`, `3)`, `(4)`, `5:`, `#6`, and a JSON object's quoted key (`"7": "`). */
+const NUMBERING = /\d+[.):]|#\d+|\(\d+\)|["']\d+["']\s*:/g;
 /**
- * Whether the stretch between two words could be a list's: what ends a sentence or a clause (`.`, `!`, `?`, `;`, `:`,
- * also full-width) or marks up text (`<`, `>`) never is, except the full stop or colon of numbering (`2.`, `3)`, `4:`).
+ * Whether the stretch between two words could be a list's: only spaces and line breaks, digits and numbering, commas,
+ * semicolons, pipes, hyphens, underscores and bullets, and quotes and brackets with a comma, a line break or a quoted
+ * key (JSON, a Python list). What ends or runs through a sentence (`.`, `!`, `?`, `:`, parentheses, arrows, slashes,
+ * dashes, backticks, markup) never is.
  */
-const listGap = (gap: string): boolean => gap.length <= PHRASE_GAP && !/[.!?;:<>。！？；：．]/.test(gap.replace(/\d+[.):]/g, ""));
+function listGap(gap: string): boolean {
+  if (gap.length > PHRASE_GAP) return false;
+  const rest = gap.replace(NUMBERING, " ");
+  if (!/^[\s\d,;|_•*、，；"'[\]{}-]*$/.test(rest)) return false;
+  return !/["'[\]{}]/.test(rest) || /[,\n]/.test(rest) || /["']\d+["']\s*:/.test(gap);
+}
+/**
+ * Numbers between one-character words (Chinese, Japanese, Korean) join them only in a list (a line break or
+ * numbering): "2026年11月11日" and "1分 5分 15分" are dates and timeframes.
+ */
+const cjkGap = (gap: string): boolean => !/\d/.test(gap) || /\n/.test(gap) || /\d[.):]|\(\d+\)|["']\d+["']\s*:/.test(gap);
 /** No BIP-39 word is longer (in UTF-16 units, before folding): longer runs of letters are never looked up. */
 const MAX_WORD = 16;
 
 /**
  * Hides recovery phrases: a run of at least {@link PHRASE_RUN} words of one BIP-39 list becomes `[phrase]`, also
- * inside a longer run of words. Words match in any case and with or without accents, and anything without letters of
- * up to {@link PHRASE_GAP} characters may stand between them, as in lists: spaces, commas, line breaks, numbering
- * (`1.`, `2)`), dashes, pipes, quotes and brackets (a JSON array); never the end of a sentence (see {@link listGap}).
- * Words written with nothing between them (Chinese without spaces) aren't found. The backend's error reports
- * (src/routes/support.ts) and AI checks, and the app's error reports (src/services/errorReports.ts), use it as well as
- * {@link scrubOpsText}.
+ * inside a longer run of words. Words match in any case and with or without accents, and what lists put between words
+ * may stand between them ({@link listGap}): spaces, line breaks, numbering (`1.`, `2)`), commas, semicolons, hyphens,
+ * pipes, quotes and brackets (JSON); never the end of a sentence or other prose punctuation. Words written with
+ * nothing between them (Chinese without spaces) aren't found. The backend's error reports (src/routes/support.ts) and
+ * AI checks, and the app's error reports (src/services/errorReports.ts), use it as well as {@link scrubOpsText}.
  */
 export function scrubPhrases(s: string): string {
-  // Each word of a list: where it is, the lists it is in (one bit each), and whether it follows a word of one of those
-  // lists across a list's gap. Other words only break runs.
-  const words: { start: number; end: number; in: number; joins: boolean }[] = [];
+  // Each word of a list: where it is, the lists it is in (one bit each), and the lists whose run it continues (it
+  // follows a word of the list across a gap a list has). Other words only break runs.
+  const words: { start: number; end: number; in: number; joins: number }[] = [];
+  const folds = new Map<string, number>();
   let any = 0;
   let prevEnd = 0;
   let prevIn = 0;
@@ -127,10 +144,23 @@ export function scrubPhrases(s: string): string {
     const w = m[0];
     let lists = 0;
     if (w.length <= MAX_WORD) {
-      const folded = foldWord(w);
-      for (let i = 0; i < PHRASE_LISTS.length; i++) if (PHRASE_LISTS[i]!.has(folded)) lists |= 1 << i;
+      const known = folds.get(w);
+      if (known !== undefined) lists = known;
+      else {
+        const folded = foldWord(w);
+        for (let i = 0; i < PHRASE_LISTS.length; i++) if (PHRASE_LISTS[i]!.has(folded)) lists |= 1 << i;
+        if (folds.size < 4096) folds.set(w, lists);
+      }
     }
-    if (lists !== 0) words.push({ start: m.index, end: m.index + w.length, in: lists, joins: (prevIn & lists) !== 0 && listGap(s.slice(prevEnd, m.index)) });
+    if (lists !== 0) {
+      let joins = prevIn & lists;
+      if (joins !== 0) {
+        const gap = s.slice(prevEnd, m.index);
+        if (!listGap(gap)) joins = 0;
+        else if (!cjkGap(gap)) joins &= ~CJK_LISTS;
+      }
+      words.push({ start: m.index, end: m.index + w.length, in: lists, joins });
+    }
     any |= lists;
     prevEnd = m.index + w.length;
     prevIn = lists;
@@ -145,7 +175,7 @@ export function scrubPhrases(s: string): string {
     for (let i = 0; i <= words.length; i++) {
       const w = words[i];
       const member = w !== undefined && (w.in & bit) !== 0;
-      if (member && first >= 0 && w.joins) continue;
+      if (member && first >= 0 && (w.joins & bit) !== 0) continue;
       if (first >= 0 && i - first >= PHRASE_RUN) spans.push([words[first]!.start, words[i - 1]!.end]);
       // A word of the list after a gap no list has starts a run of its own.
       first = member ? i : -1;
@@ -196,7 +226,6 @@ export function scrubOpsText(input: string): string {
   // …and of paths (`/v1/x?token=…`).
   s = s.replace(/(^|[\s("'])(\/[\w./~%-]*)[?#][^\s)"']*/g, "$1$2");
   s = s.replace(/\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]");
-  s = scrubPhrases(s);
   // `password=…`, `"secret":"…"`, and environment names ending in one (`HMAC_SECRET=`, `OPENROUTER_API_KEY=`).
   s = s.replace(
     new RegExp(`(?<![A-Za-z0-9])((?:[A-Za-z0-9]{1,40}_){0,4}(?:${SECRET_KEYS}))(\\s*[=:]\\s*|"\\s*:\\s*"?|'\\s*:\\s*'?)([^\\s,;&"'}\\]]+)`, "gi"),
@@ -204,6 +233,8 @@ export function scrubOpsText(input: string): string {
   );
   // …and a quoted secret's whole value (`"mnemonic":"word word …"`), which the rule above cuts at the first space.
   s = s.replace(new RegExp(`("(?:${SECRET_KEYS})"\\s*:\\s*)"(?:[^"\\\\]|\\\\.){0,2000}"`, "gi"), '$1"[redacted]"');
+  // Recovery phrases after the key rules: a key's name made of list words (`…_WAVE_TOKEN=`) must still hide its value.
+  s = scrubPhrases(s);
   s = s.replace(/(?<![A-Za-z0-9_-])sk-(?:ant-)?[A-Za-z0-9_-]{16,256}/g, "sk-[redacted]");
   s = s.replace(/(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{30,128}/g, "AIza[redacted]");
   s = s.replace(/(?<![A-Za-z0-9_-])xox[abprs]-[A-Za-z0-9-]{10,256}/g, "xox-[redacted]");

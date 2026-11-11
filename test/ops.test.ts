@@ -63,22 +63,30 @@ describe("scrubPhrases", () => {
     expect(scrubPhrases("repro legal winner thank year wave sausage n=1")).toBe("repro [phrase] n=1");
   });
 
-  it("hides a phrase written as a list: numbered, one word per line, dashes, pipes, a JSON array, a table", () => {
+  it("hides a phrase written as a list: numbered, one word per line, dashes, pipes, semicolons, JSON, a table", () => {
     const words = PHRASE_CAPS.toLowerCase().split(" ");
     for (const written of [
       words.map((w, i) => `${i + 1}. ${w}`).join("\n"),
       words.map((w, i) => `${i + 1}) ${w}`).join(" "),
       words.map((w, i) => `${i + 1}: ${w}`).join("\n"),
+      words.map((w, i) => `(${i + 1}) ${w}`).join(" "),
+      words.map((w, i) => `#${i + 1} ${w}`).join("\n"),
+      words.map((w) => `- ${w}`).join("\n"),
+      words.map((w) => `• ${w}`).join("\n"),
       words.join("\n"),
       words.join("\r\n"),
       words.join("-"),
       words.join(" | "),
-      words.join(" / "),
+      words.join("; "),
+      words.join(";"),
       words.join("_"),
       words.join("\t"),
       JSON.stringify(words),
       JSON.stringify(words, null, 4),
       `['${words.join("', '")}']`,
+      JSON.stringify(Object.fromEntries(words.map((w, i) => [String(i + 1), w]))),
+      JSON.stringify(Object.fromEntries(words.map((w, i) => [String(i + 1), w])), null, 2),
+      words.join(","),
       `| ${words.map((w, i) => `${i + 1} | ${w}`).join(" | ")} |`,
       words.map((w) => `**${w}**`).join(" "),
       words.map((w, i) => (i % 2 ? w.toUpperCase() : w)).join(" "),
@@ -108,8 +116,11 @@ describe("scrubPhrases", () => {
       "the order was rejected because the price moved too far",
       "legal winner thank year wave",
       "legal-winner-thank-year-wave",
-      // The end of a sentence or a clause joins no list.
+      // The end of a sentence or a clause, and prose punctuation, join no list.
       "Kokoah started tracking this market just now. Try again in a few minutes.",
+      "In Settings (account menu) → Security → This device, choose what protects the key",
+      "the order (market or limit) / price / size `stop` → filled",
+      "price — and then the market moved over time",
       "Use email, Google or a passkey, or connect a wallet you already have. You sign one readable message.",
       "Pro order types that work over time: Scale, Chase, TWAP, Trailing stop and Bracket.",
       "close half of my BTC long at 65000 and set a stop at 60000",
@@ -121,8 +132,21 @@ describe("scrubPhrases", () => {
       "El bitcoin subió mucho hoy. ¿Puedo abrir una posición larga ahora?",
       "Le bitcoin a beaucoup monté aujourd'hui. Puis-je ouvrir une position longue maintenant ?",
       "Bitcoin dnes hodně vzrostl. Můžu teď otevřít dlouhou pozici?",
+      // Dates and timeframes: one-character words with numbers between them.
+      "2026年11月11日10时30分15秒",
+      "1分 5分 15分 1时 4时 1日",
+      "1分、5分、15分、1时、4时、1日",
     ])
       expect(scrubPhrases(ordinary), ordinary).toBe(ordinary);
+  });
+
+  it("stays fast on many short words, also accented or one CJK character each", () => {
+    for (const input of ["é ".repeat(4000), `${simplifiedChinese.slice(0, 2000).join(" ")} `.repeat(2), `${japanese.slice(0, 800).join(" ")}`, "a ".repeat(4000), "ab.".repeat(2700)]) {
+      const t0 = performance.now();
+      scrubPhrases(input.slice(0, 8000));
+      scrubOpsText(input);
+      expect(performance.now() - t0, input.slice(0, 12)).toBeLessThan(200);
+    }
   });
 
   it("keeps the text around a phrase and hides each phrase once", () => {
@@ -130,6 +154,14 @@ describe("scrubPhrases", () => {
     expect(scrubPhrases(`a: ${words.join("\n")}\nb: ${PHRASE}.`)).toBe("a: [phrase]\nb: [phrase].");
     expect(scrubPhrases(`${words.slice(0, 6).join(" ")}. ${words.slice(6).join(" ")}`)).toBe("[phrase]. [phrase]");
     expect(scrubPhrases("[phrase]")).toBe("[phrase]");
+  });
+
+  it("keeps hiding a secret whose key's name is made of list words", () => {
+    for (const key of ["LEGAL_WINNER_THANK_YEAR_WAVE_TOKEN", "legal-winner-thank-year-wave-session", "LEGAL_WINNER_THANK_YEAR_WAVE_PRIVATE_KEY", "USER_ACCOUNT_ACCESS_DEVICE_CLIENT_SECRET"]) {
+      const out = scrubOpsText(`${key}=hunter2`);
+      expect(out, key).not.toContain("hunter2");
+      expect(out, key).toContain("[redacted]");
+    }
   });
 
   it("is part of scrubOpsText, also for a phrase in a quoted secret", () => {
