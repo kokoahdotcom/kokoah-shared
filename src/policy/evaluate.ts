@@ -96,6 +96,18 @@ export interface PolicyContext {
   /** Current leverage setting per coin, when known. */
   leverageByCoin?: Readonly<Record<string, number>>;
   /**
+   * The traded account's open isolated positions, by coin, with the leverage each is at now, read by the signer itself.
+   * Raising that leverage takes margin out of the position (closer to liquidation), like removing margin: automation may
+   * not do it. Given for `updateLeverage`; see {@link PolicyContext.requireIsolatedPositions}.
+   */
+  isolatedPositionLeverage?: Readonly<Record<string, number>>;
+  /**
+   * An `updateLeverage` of automation must come with {@link PolicyContext.isolatedPositionLeverage} (an unread account
+   * is refused, never taken for one without isolated positions). For signers that read it themselves (the signer
+   * service); previews leave it unset.
+   */
+  requireIsolatedPositions?: boolean;
+  /**
    * With `policy.requireStopLossForNewEntries`, cancels and modifies (the exact wire action) must not take stop-loss
    * cover away from a position, and an order's entries must leave the whole position they add to covered
    * (`stopCoverage.ts`), checked against `accountBook`; without it they are `STOP_LOSS_REQUIRED`, and so is setting a
@@ -239,8 +251,22 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
   switch (actionType) {
     case "updateLeverage": {
       const lev = wire ? (wire.leverage as number) : intent?.kind === "updateLeverage" ? intent.leverage : Number.NaN;
-      checkCoin(wire ? resolveCoin(wire.asset as number, context, add) : intent?.kind === "updateLeverage" ? intent.coin : undefined);
+      const coin = wire ? resolveCoin(wire.asset as number, context, add) : intent?.kind === "updateLeverage" ? intent.coin : undefined;
+      checkCoin(coin);
       if (!(lev <= policy.maxLeverage)) add("LEVERAGE_EXCEEDED", `Leverage ${lev}x is above the policy maximum of ${policy.maxLeverage}x.`);
+      // Raising the leverage of an open isolated position takes margin out of it, which no notional cap covers: like
+      // removing margin, automation (see updateIsolatedMargin below) may lower it, never raise it.
+      const isolated = wire ? wire.isCross === false : intent?.kind === "updateLeverage" && intent.marginMode === "isolated";
+      if (isolated && isAutomation(policy, origin) && coin !== undefined) {
+        const now = context.isolatedPositionLeverage;
+        if (now === undefined) {
+          if (context.requireIsolatedPositions === true) {
+            add("ACTION_TYPE_NOT_ALLOWED", `The account's isolated ${coin} position could not be checked, so its leverage is not changed.`);
+          }
+        } else if (Object.hasOwn(now, coin) && !(lev <= (now[coin] as number))) {
+          add("ACTION_TYPE_NOT_ALLOWED", `Automation may lower the leverage of the isolated ${coin} position, not raise it (from ${now[coin]}x to ${lev}x): that takes margin out of it.`);
+        }
+      }
       break;
     }
     case "updateIsolatedMargin":
@@ -252,7 +278,7 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
       // margin of the largest order the key may place, even at 1×), never the account's whole cross collateral at once.
       // `topUpIsolatedOnlyMargin` names a target leverage instead of an amount, so it can't be capped: automation doesn't
       // sign it.
-      const automation = (policy.allowedOrigins !== undefined && !policy.allowedOrigins.includes("manual")) || (origin !== undefined && origin !== "manual");
+      const automation = isAutomation(policy, origin);
       const amountUsd = wire ? Number(wire.ntli) / 1e6 : intent?.kind === "updateIsolatedMargin" ? Number(intent.amountUsd) : Number.NaN;
       if (automation) {
         if (actionType === "topUpIsolatedOnlyMargin") {
@@ -599,6 +625,14 @@ function placedCloids(intent: ActionIntent | undefined, wire: Wire | undefined):
     out.push(intent.order.cloid);
   }
   return out.filter((c): c is string => typeof c === "string");
+}
+
+/**
+ * Whether automation signs this: a key without manual trading (such as the servers' automation keys), or any origin
+ * other than the user's own hand.
+ */
+function isAutomation(policy: Policy, origin: IntentOrigin | undefined): boolean {
+  return (policy.allowedOrigins !== undefined && !policy.allowedOrigins.includes("manual")) || (origin !== undefined && origin !== "manual");
 }
 
 /** True for a cloid whose Kokoah tag names the bot origin: a bot's own order. */

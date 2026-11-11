@@ -257,6 +257,31 @@ describe("order limits", () => {
     expect(evalIntent(margin("-50", "manual")).allowed).toBe(true);
   });
 
+  it("lets automation lower the leverage of an isolated position but never raise it (that takes margin out)", () => {
+    const lev = (leverage: number, origin: string, marginMode = "isolated") => ({ kind: "updateLeverage", coin: "BTC", leverage, marginMode, origin }) as ActionIntentInput;
+    const open = { isolatedPositionLeverage: { BTC: 5 } };
+    const raised = evalIntent(lev(8, "guardian"), open);
+    expect(codes(raised)).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(raised.violations[0]!.message).toBe("Automation may lower the leverage of the isolated BTC position, not raise it (from 5x to 8x): that takes margin out of it.");
+    expect(evalIntent(lev(3, "guardian"), open).allowed).toBe(true);
+    expect(evalIntent(lev(5, "telegram"), open).allowed).toBe(true);
+    // The compiled wire action is what the signer checks.
+    const compiled = compileAction(parseActionIntent(lev(8, "guardian")), { registry });
+    expect(codes(evaluatePolicy({ kind: "compiled", compiled }, ctx(open)))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(codes(evaluatePolicy({ kind: "wire", action: compiled.action as never, expiresAfter: NOW + 1000, origin: "bot" }, ctx(open)))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    // No isolated position there, cross margin, or the user's own hand: unchanged.
+    expect(evalIntent(lev(8, "guardian"), { isolatedPositionLeverage: {} }).allowed).toBe(true);
+    expect(evalIntent(lev(8, "guardian", "cross"), open).allowed).toBe(true);
+    expect(evalIntent(lev(8, "manual"), open).allowed).toBe(true);
+    // A key without manual trading is automation whatever the origin says.
+    expect(codes(evalIntent(lev(8, "manual"), { ...open, policy: { ...policy, allowedOrigins: ["guardian", "manual"] } }))).toEqual([]);
+    expect(codes(evaluatePolicy(parseActionIntent(lev(8, "guardian")), ctx({ ...open, policy: { ...policy, allowedOrigins: ["guardian"] } })))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    // A signer that must read the account refuses when it couldn't; previews don't check.
+    expect(codes(evalIntent(lev(3, "guardian"), { requireIsolatedPositions: true }))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(evalIntent(lev(8, "guardian")).allowed).toBe(true);
+    expect(evalIntent(lev(8, "guardian", "cross"), { requireIsolatedPositions: true }).allowed).toBe(true);
+  });
+
   it("caps the isolated margin an automation key adds at once at the order limit", () => {
     const margin = (amountUsd: string, origin: string) => ({ kind: "updateIsolatedMargin", coin: "BTC", amountUsd, origin }) as ActionIntentInput;
     const server = { policy: { ...policy, allowedOrigins: ["guardian", "telegram"] as Policy["allowedOrigins"] } };
