@@ -17,7 +17,9 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   entry with an attached stop-loss is `STOP_LOSS_REQUIRED` unless stops on the book cover the whole position.
 - `policy`: `stopCanFill` needs a stop-limit's limit beyond its trigger (at the trigger no longer counts as cover).
 - `policy`: `PolicyContext.isolatedPositionLeverage` and `requireIsolatedPositions`: automation's `updateLeverage` may not
-  raise the leverage of an open isolated position.
+  raise the leverage of an open isolated position, nor switch it to cross.
+- `policy`: attached stop-losses still waiting for their entry to fill (`attachedStops`) never count as cover, also if
+  listed as orders of their own.
 
 ### Added
 - `policy`: stop coverage. `PolicyContext.requireStopCoverage` (opt-in) with `accountBook` (the traded account's
