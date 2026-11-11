@@ -552,7 +552,7 @@ function checkSpotLegs(legs: OrderLeg[], actionType: string, wire: Wire | undefi
 
 /**
  * An entry is protected when an attached stop-loss leg (reduce-only, opposite side, same coin) covers its full size,
- * can fill when it fires (a market trigger, or a limit at or beyond its trigger), sits on the losing side of the entry
+ * can fill when it fires (a market trigger, or a limit beyond its trigger), sits on the losing side of the entry
  * and, when the policy sets `maxStopLossDistancePct`, is close enough to it.
  */
 function attachedStopProblem(entry: OrderLeg, legs: OrderLeg[], rawMark: number | undefined, maxDistancePct: number | undefined): string | null {
@@ -573,7 +573,7 @@ function attachedStopProblem(entry: OrderLeg, legs: OrderLeg[], rawMark: number 
     return null;
   }
   if (unfillable) {
-    return `The ${entry.coin} stop-loss's limit price must be at or beyond its trigger (at or below it for a sell, at or above it for a buy), or it may never fill.`;
+    return `The ${entry.coin} stop-loss's limit price must be beyond its trigger (below it for a sell, above it for a buy), or it may never fill.`;
   }
   return maxDistancePct !== undefined
     ? `The ${entry.coin} stop-loss must cover the whole entry, sit on the losing side and be within ${maxDistancePct}% of the entry.`
