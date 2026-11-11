@@ -19,7 +19,7 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 - `policy`: `PolicyContext.isolatedPositionLeverage` and `requireIsolatedPositions`: automation's `updateLeverage` may not
   raise the leverage of an open isolated position, nor switch it to cross.
 - `policy`: attached stop-losses still waiting for their entry to fill (`attachedStops`) never count as cover, also if
-  listed as orders of their own.
+  listed as orders of their own; a cancel or modify that names such a stop without its entry is `STOP_LOSS_REQUIRED`.
 
 ### Added
 - `policy`: stop coverage. `PolicyContext.requireStopCoverage` (opt-in) with `accountBook` (the traded account's
