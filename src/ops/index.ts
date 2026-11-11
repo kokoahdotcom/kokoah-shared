@@ -93,8 +93,8 @@ const foldWord = (w: string): string =>
 const PHRASE_LISTS: readonly ReadonlySet<string>[] = [english, spanish, french, italian, portuguese, czech, japanese, korean, simplifiedChinese, traditionalChinese].map(
   (list) => new Set(list.map(foldWord)),
 );
-/** The Japanese, Korean and both Chinese lists (bits of {@link PHRASE_LISTS}): their words are often one character. */
-const CJK_LISTS = (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9);
+/** Both Chinese lists (bits of {@link PHRASE_LISTS}): their words are one character each. */
+const CHINESE_LISTS = (1 << 8) | (1 << 9);
 /** This many of those words in a row are taken for a recovery phrase (or part of one): ordinary text seldom has them. */
 export const PHRASE_RUN = 6;
 /**
@@ -102,8 +102,11 @@ export const PHRASE_RUN = 6;
  * `"\n12. "`, `" | "`, `"-"`, a JSON array's `",\n    "`, a table's `" | 7 | "`).
  */
 const PHRASE_GAP = 16;
-/** Numbering a list puts before a word: `12.`, `3)`, `(4)`, `5:`, `#6`, and a JSON object's quoted key (`"7": "`). */
-const NUMBERING = /\d+[.):]|#\d+|\(\d+\)|["']\d+["']\s*:/g;
+/**
+ * Numbering a list puts before a word: `12.`, `3)`, `(4)`, `5:`, `#6`, `#7:`, full-width (`８．`, `（９）`), and a JSON
+ * object's quoted key (`"10": "`).
+ */
+const NUMBERING = /[0-9０-９]+[.):．）：]|#[0-9]+[.):]?|\([0-9]+\)|（[0-9０-９]+）|["'][0-9]+["']\s*:/g;
 /**
  * Whether the stretch between two words could be a list's: only spaces and line breaks, digits and numbering, commas,
  * semicolons, pipes, hyphens, underscores and bullets, and quotes and brackets with a comma, a line break or a quoted
@@ -113,14 +116,15 @@ const NUMBERING = /\d+[.):]|#\d+|\(\d+\)|["']\d+["']\s*:/g;
 function listGap(gap: string): boolean {
   if (gap.length > PHRASE_GAP) return false;
   const rest = gap.replace(NUMBERING, " ");
-  if (!/^[\s\d,;|_•*、，；"'[\]{}-]*$/.test(rest)) return false;
+  if (!/^[\s0-9０-９,;|_•*、，；"'[\]{}-]*$/.test(rest)) return false;
   return !/["'[\]{}]/.test(rest) || /[,\n]/.test(rest) || /["']\d+["']\s*:/.test(gap);
 }
 /**
- * Numbers between one-character words (Chinese, Japanese, Korean) join them only in a list (a line break or
- * numbering): "2026年11月11日" and "1分 5分 15分" are dates and timeframes.
+ * Numbers between one-character words (the Chinese lists) join them only in a list (a line break or numbering, also
+ * `1、` and full-width): "2026年11月11日" and "1分 5分 15分" are dates and timeframes.
  */
-const cjkGap = (gap: string): boolean => !/\d/.test(gap) || /\n/.test(gap) || /\d[.):]|\(\d+\)|["']\d+["']\s*:/.test(gap);
+const chineseGap = (gap: string): boolean =>
+  !/[0-9０-９]/.test(gap) || /\n/.test(gap) || /[0-9０-９][.):．）：]|\s[0-9０-９]+、|\([0-9]+\)|（[0-9０-９]+）|["'][0-9]+["']\s*:/.test(gap);
 /** No BIP-39 word is longer (in UTF-16 units, before folding): longer runs of letters are never looked up. */
 const MAX_WORD = 16;
 
@@ -157,7 +161,7 @@ export function scrubPhrases(s: string): string {
       if (joins !== 0) {
         const gap = s.slice(prevEnd, m.index);
         if (!listGap(gap)) joins = 0;
-        else if (!cjkGap(gap)) joins &= ~CJK_LISTS;
+        else if (!chineseGap(gap)) joins &= ~CHINESE_LISTS;
       }
       words.push({ start: m.index, end: m.index + w.length, in: lists, joins });
     }

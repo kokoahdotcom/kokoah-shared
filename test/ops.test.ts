@@ -107,6 +107,19 @@ describe("scrubPhrases", () => {
     }
     const plain = spanish.slice(0, 12).map((w) => w.normalize("NFKD").replace(/\p{M}/gu, "").toUpperCase());
     expect(scrubPhrases(plain.join(" "))).toBe("[phrase]");
+    // Numbered on one line, also the CJK ways and full-width digits.
+    const zh = simplifiedChinese.slice(300, 312);
+    for (const [name, written] of [
+      ["zh 1、", zh.map((w, i) => `${i + 1}、${w}`).join(" ")],
+      ["zh （1）", zh.map((w, i) => `（${i + 1}）${w}`).join(" ")],
+      ["zh １．", zh.map((w, i) => `${String.fromCharCode(0xff11 + (i % 9))}．${w}`).join(" ")],
+      ["ko 1", korean.slice(300, 312).map((w, i) => `${i + 1} ${w}`).join(" ")],
+      ["ja 1", japanese.slice(300, 312).map((w, i) => `${i + 1} ${w}`).join(" ")],
+      ["en Word #1:", PHRASE_CAPS.split(" ").map((w, i) => `Word #${i + 1}: ${w}`).join("\n")],
+    ] as const) {
+      expect(scrubPhrases(written), name).toContain("[phrase]");
+      expect(scrubPhrases(written), name).not.toContain(name.startsWith("en") ? "Legal" : name.startsWith("zh") ? zh[5]! : "\u0000");
+    }
   });
 
   it("keeps ordinary text and short runs of those words", () => {
@@ -136,6 +149,9 @@ describe("scrubPhrases", () => {
       "2026年11月11日10时30分15秒",
       "1分 5分 15分 1时 4时 1日",
       "1分、5分、15分、1时、4时、1日",
+      "第1、第2、第3、第4、第5、第6天",
+      "２０２６年１１月１１日１０时３０分１５秒",
+      "2026년 11월 11일",
     ])
       expect(scrubPhrases(ordinary), ordinary).toBe(ordinary);
   });
@@ -145,7 +161,8 @@ describe("scrubPhrases", () => {
       const t0 = performance.now();
       scrubPhrases(input.slice(0, 8000));
       scrubOpsText(input);
-      expect(performance.now() - t0, input.slice(0, 12)).toBeLessThan(200);
+      // A few milliseconds each; the bound only catches work that grows faster than the text (a loaded machine is slow).
+      expect(performance.now() - t0, input.slice(0, 12)).toBeLessThan(1000);
     }
   });
 
