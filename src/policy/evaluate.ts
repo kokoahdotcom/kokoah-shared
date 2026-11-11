@@ -10,7 +10,8 @@
  *    margin (automation only adds it, at most `maxOrderNotionalUsd` at a time, counted toward the daily notional and
  *    the per-minute rate),
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
- *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
+ *    resting band; a trigger's limit within `priceBandPct` of its trigger unless it is reduce-only and away from the
+ *    mark, then max(`priceBandPct`, 10%); see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
  *    `scheduleCancel` at most 1 h ahead, and (with `requireStopCoverage`) no cancel or modify that takes stop-loss
  *    cover away from a position, no entry that leaves the position it adds to partly covered, and no `scheduleCancel`
  *    set at all;
@@ -414,10 +415,19 @@ function checkOrderLegs(
       }
     } else if (mark === undefined) {
       // The limit-vs-trigger part needs no mark; check it before reporting the missing mark.
-      const problem = triggerLimitBandProblem({ triggerPrice: leg.triggerPrice as number, limitPrice: leg.price, bandPct: band, label: leg.coin });
+      const problem = triggerLimitBandProblem({
+        triggerPrice: leg.triggerPrice as number,
+        limitPrice: leg.price,
+        bandPct: band,
+        label: leg.coin,
+        reduceOnly: leg.reduceOnly,
+        isBuy: leg.isBuy,
+        tpsl: leg.tpsl ?? "sl",
+      });
       if (problem) add("PRICE_OUTSIDE_BAND", problem);
       add("MARK_PRICE_UNAVAILABLE", `No mark price for ${leg.coin}.`);
     } else {
+      // The limit's allowance from its trigger: max(band, 10%) only for a reduce-only trigger away from the mark.
       const check = checkTriggerPriceBand({
         isBuy: leg.isBuy,
         tpsl: leg.tpsl ?? "sl",
@@ -426,6 +436,7 @@ function checkOrderLegs(
         mark,
         bandPct: band,
         label: leg.coin,
+        reduceOnly: leg.reduceOnly,
       });
       for (const p of check.problems) add("PRICE_OUTSIDE_BAND", p);
     }
@@ -648,7 +659,8 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
       coin: intent.coin,
       isBuy: intent.side === "buy",
       size: Number(intent.size),
-      // Market-type triggers: the compiler uses trigger ± 10%; the trigger stands in for the limit price here.
+      // Market-type triggers: the compiler puts the limit at trigger ± the slippage it is given (10% by default); the
+      // trigger stands in for the limit price here, and the compiled wire action is checked with its real limit.
       price: intent.price !== undefined ? Number(intent.price) : isTrigger && intent.triggerPrice !== undefined ? Number(intent.triggerPrice) : undefined,
       triggerPrice: intent.triggerPrice !== undefined ? Number(intent.triggerPrice) : undefined,
       isTrigger,

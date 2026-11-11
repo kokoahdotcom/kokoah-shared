@@ -15,6 +15,7 @@ import {
   DENIED_ACTION_TYPES,
   evaluatePolicy,
   hashPolicy,
+  marketTriggerSlippageFor,
   parsePolicy,
   type Policy,
   policyBuilderOutdated,
@@ -332,21 +333,23 @@ describe("order limits", () => {
 
 describe("compiled and wire actions", () => {
   const builder = { address: BUILDER.b, feeTenthsBps: BUILDER.f };
+  // As the signers compile: market triggers within the slippage the policy allows them.
+  const slip = { marketTriggerSlippageBps: marketTriggerSlippageFor(policy, ctx().markPrices) };
 
   it("checks the builder on the exact wire action", () => {
-    const ok = compileAction(entry(), { registry, builder });
+    const ok = compileAction(entry(), { registry, builder, ...slip });
     expect(evaluatePolicy({ kind: "compiled", compiled: ok }, ctx()).allowed).toBe(true);
-    const none = compileAction(entry(), { registry });
+    const none = compileAction(entry(), { registry, ...slip });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: none }, ctx()))).toEqual(["BUILDER_REQUIRED"]);
-    const wrong = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: 100 } });
+    const wrong = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: 100 }, ...slip });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: wrong }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
-    const other = compileAction(entry(), { registry, builder: { ...builder, address: "0x2222222222222222222222222222222222222222" } });
+    const other = compileAction(entry(), { registry, builder: { ...builder, address: "0x2222222222222222222222222222222222222222" }, ...slip });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: other }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
   });
 
   it("refuses an order at a raised standard fee under a policy signed before, until it is signed again", () => {
     const raised = { ...builder, feeTenthsBps: BUILDER.f + 20 };
-    const c = compileAction(entry(), { registry, builder: raised });
+    const c = compileAction(entry(), { registry, builder: raised, ...slip });
     expect(policyBuilderOutdated(policy, raised)).toBe(true);
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
     const again = withCurrentBuilder(policy, raised);
@@ -356,20 +359,20 @@ describe("compiled and wire actions", () => {
 
   it("accepts a lower builder fee (a promotion) but never a higher one", () => {
     for (const f of [0, 10, BUILDER.f]) {
-      const c = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: f } });
+      const c = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: f }, ...slip });
       expect(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()).allowed).toBe(true);
     }
-    const above = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: BUILDER.f + 1 } });
+    const above = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: BUILDER.f + 1 }, ...slip });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: above }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
   });
 
   it("evaluates compiled market orders at their IOC price", () => {
-    const c = compileAction(entry({ orderType: "market", price: undefined, slippageBps: 100 }), { registry, builder, getMidPrice: () => 100_000 });
+    const c = compileAction(entry({ orderType: "market", price: undefined, slippageBps: 100 }), { registry, builder, getMidPrice: () => 100_000, ...slip });
     expect(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()).allowed).toBe(true);
   });
 
   it("evaluates raw wire actions via the registry", () => {
-    const c = compileAction(entry({ coin: "xyz:SP500", size: "1", price: "6800", stopLoss: { triggerPrice: "6600" } }), { registry, builder });
+    const c = compileAction(entry({ coin: "xyz:SP500", size: "1", price: "6800", stopLoss: { triggerPrice: "6600" } }), { registry, builder, ...slip });
     const wire = { kind: "wire" as const, action: c.action as unknown as { type: string }, expiresAfter: NOW + 10_000, origin: "manual" as const };
     expect(evaluatePolicy(wire, ctx()).allowed).toBe(true);
     expect(codes(evaluatePolicy(wire, ctx({ registry: undefined })))).toContain("UNKNOWN_MARKET");
@@ -380,7 +383,7 @@ describe("compiled and wire actions", () => {
   });
 
   it("does not require a builder on cancels or leverage changes", () => {
-    const c = compileAction({ kind: "cancel", cancels: [{ coin: "BTC", oid: 1 }], origin: "manual" }, { registry });
+    const c = compileAction({ kind: "cancel", cancels: [{ coin: "BTC", oid: 1 }], origin: "manual" }, { registry, ...slip });
     expect(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()).allowed).toBe(true);
   });
 });

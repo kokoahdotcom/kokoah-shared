@@ -10,7 +10,8 @@
  * - Market orders are IOC limit orders at mid ± slippage, rounded to a valid tick toward the mid so the price never
  *   exceeds the slippage tolerance (if that would not be marketable, one tick further).
  * - Market-type triggers (stopMarket, takeProfitMarket and market TP/SL legs) carry `isMarket: true` and a limit price
- *   at the trigger ± 10%, HL's documented market TP/SL slippage tolerance, rounded the same way (one tick further when
+ *   at the trigger ± 10%, HL's documented market TP/SL slippage tolerance, or ± what `marketTriggerSlippageBps` gives
+ *   (signers pass the policy's band, policy `marketTriggerSlippageFor`), rounded the same way (one tick further when
  *   rounding toward the trigger would land on it).
  * - Attached TP/SL legs use grouping `normalTpsl`: children are reduce-only, opposite side, same size as the parent.
  * - Sizes and prices must already be valid for the market (the UI shows the rounded values); the compiler rejects
@@ -90,6 +91,23 @@ export interface CompileOptions {
   newCloid?: (origin: IntentOrigin) => Cloid;
   /** Current time in ms; enables the `scheduleCancel` ≥ 5 s check. */
   now?: number;
+  /**
+   * The limit slippage (bps, an integer from 0 to {@link MARKET_TRIGGER_SLIPPAGE_BPS}) of each market-type trigger leg:
+   * the parent of a stopMarket / takeProfitMarket order or modify, and market TP/SL legs. Default: 1000 (10%) for every
+   * leg. Signers pass the slippage their policy allows (policy `marketTriggerSlippageFor`), so a trigger near the mark,
+   * or one that isn't reduce-only, is limited to the policy's price band.
+   */
+  marketTriggerSlippageBps?: (leg: MarketTriggerLeg) => number;
+}
+
+/** A market-type trigger leg, as {@link CompileOptions.marketTriggerSlippageBps} sees it. */
+export interface MarketTriggerLeg {
+  coin: string;
+  isBuy: boolean;
+  reduceOnly: boolean;
+  tpsl: "tp" | "sl";
+  /** The trigger price as it will be signed. */
+  triggerPrice: string;
 }
 
 /** A compiled action plus the metadata needed to sign, send and reconcile it. */
@@ -186,6 +204,7 @@ export function compileAction(intentInput: ActionIntent | ActionIntentInput, opt
         tif: o.tif,
         reduceOnly: o.reduceOnly,
         cloid: o.cloid,
+        slippage: options.marketTriggerSlippageBps,
       });
       const oid = "oid" in intent.target ? intent.target.oid : intent.target.cloid;
       const raw = { type: "modify" as const, oid, order: wire };
@@ -265,6 +284,7 @@ function compileOrder(intent: OrderIntent, options: CompileOptions): Omit<Compil
       tif: intent.tif,
       reduceOnly: intent.reduceOnly,
       cloid: parentCloid,
+      slippage: options.marketTriggerSlippageBps,
     });
   }
 
@@ -288,6 +308,7 @@ function compileOrder(intent: OrderIntent, options: CompileOptions): Omit<Compil
         tif: undefined,
         reduceOnly: true,
         cloid: legCloid,
+        slippage: options.marketTriggerSlippageBps,
       }),
     );
     cloids.push(legCloid);
@@ -321,6 +342,8 @@ function buildOrderWire(o: {
   tif: "Gtc" | "Ioc" | "Alo" | undefined;
   reduceOnly: boolean;
   cloid: Cloid | undefined;
+  /** The market trigger's limit slippage (see {@link CompileOptions.marketTriggerSlippageBps}). */
+  slippage?: ((leg: MarketTriggerLeg) => number) | undefined;
 }): RawOrderWire {
   const { market } = o;
   const s = requireSize(o.size, market);
@@ -334,8 +357,10 @@ function buildOrderWire(o: {
     case "stopMarket":
     case "takeProfitMarket": {
       const triggerPx = requirePrice(o.triggerPrice, market, "triggerPrice");
-      p = marketTriggerLimitPrice({ triggerPrice: triggerPx, isBuy: o.isBuy, szDecimals: market.szDecimals, priceKind: market.priceKind });
-      t = { trigger: { isMarket: true, triggerPx, tpsl: o.orderType === "stopMarket" ? "sl" : "tp" } };
+      const tpsl = o.orderType === "stopMarket" ? "sl" : "tp";
+      const slippageBps = o.slippage ? o.slippage({ coin: market.coin, isBuy: o.isBuy, reduceOnly: o.reduceOnly, tpsl, triggerPrice: triggerPx }) : MARKET_TRIGGER_SLIPPAGE_BPS;
+      p = marketTriggerLimitPrice({ triggerPrice: triggerPx, isBuy: o.isBuy, szDecimals: market.szDecimals, priceKind: market.priceKind, slippageBps });
+      t = { trigger: { isMarket: true, triggerPx, tpsl } };
       break;
     }
     case "stopLimit":
@@ -388,16 +413,20 @@ export function marketOrderLimitPrice(input: {
 }
 
 /**
- * Limit price for a market-type trigger: trigger ± 10% (HL's market TP/SL tolerance), rounded to a valid tick toward
- * the trigger (buy: down, sell: up). Same rule as {@link marketOrderLimitPrice}: when the tick is coarser than the
- * tolerance, so that rounding toward the trigger lands on (or past) it, the price is rounded one tick away instead, so
- * the order keeps room to fill. This can exceed the 10% tolerance by up to one tick. A sell already at the smallest
- * positive tick has no lower price and keeps it.
+ * Limit price for a market-type trigger: trigger ± `slippageBps` (default 1000, HL's 10% market TP/SL tolerance),
+ * rounded to a valid tick toward the trigger (buy: down, sell: up). Same rule as {@link marketOrderLimitPrice}: when the
+ * tick is coarser than the tolerance, so that rounding toward the trigger lands on (or past) it, the price is rounded
+ * one tick away instead, so the order keeps room to fill. This can exceed the tolerance by up to one tick (a policy
+ * that allows less refuses it). A sell already at the smallest positive tick has no lower price and keeps it.
  */
-export function marketTriggerLimitPrice(input: { triggerPrice: number | string; isBuy: boolean; szDecimals: number; priceKind?: PriceKind }): string {
+export function marketTriggerLimitPrice(input: { triggerPrice: number | string; isBuy: boolean; szDecimals: number; priceKind?: PriceKind; slippageBps?: number }): string {
   const kind = input.priceKind ?? "perp";
+  const slippageBps = input.slippageBps ?? MARKET_TRIGGER_SLIPPAGE_BPS;
+  if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > MARKET_TRIGGER_SLIPPAGE_BPS) {
+    throw new RangeError(`slippageBps must be an integer between 0 and ${MARKET_TRIGGER_SLIPPAGE_BPS}`);
+  }
   const trig = parseDec(input.triggerPrice);
-  const delta = decMul(trig, parseDec(`${MARKET_TRIGGER_SLIPPAGE_BPS}e-4`));
+  const delta = decMul(trig, parseDec(`${slippageBps}e-4`));
   const raw = decToString(input.isBuy ? decAdd(trig, delta) : decAdd(trig, { m: -delta.m, s: delta.s }));
   const px = roundPriceToTick(raw, input.szDecimals, kind, input.isBuy ? "down" : "up");
   const cmp = decCompare(parseDec(px), trig);

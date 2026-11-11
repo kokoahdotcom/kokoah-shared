@@ -38,7 +38,7 @@ import {
 } from "../src/algos/index.js";
 import { GuardianRuleValidationError, type GuardianOrder, type GuardianPosition, type MarketState, type PositionState } from "../src/guardians/index.js";
 import type { ActionIntent } from "../src/intents/index.js";
-import { createGuardianPolicy, evaluatePolicy } from "../src/policy/index.js";
+import { createGuardianPolicy, evaluatePolicy, marketTriggerSlippageFor } from "../src/policy/index.js";
 import { mainnetRegistry } from "./helpers.js";
 
 const NOW = 1_790_000_000_000;
@@ -277,7 +277,7 @@ describe("bracket rule", () => {
     const ev = evaluateEngineRule(r, { ETH: { markPrice: 3000, szDecimals: eth.szDecimals } }, ps({ ETH: long(1, 3000) }, [order(A, "filled", 1, 1)]), NOW);
     expect(ev.intents).toHaveLength(2);
     for (const intent of ev.intents) {
-      const compiled = compileAction(intent, { registry, builder, getMidPrice: () => 3000 });
+      const compiled = compileAction(intent, { registry, builder, getMidPrice: () => 3000, marketTriggerSlippageBps: marketTriggerSlippageFor(policy, { ETH: 3000 }) });
       const decision = evaluatePolicy(
         { kind: "compiled", compiled, expiresAfter: NOW + 10_000 },
         { policy, now: NOW, markPrices: { ETH: 3000 }, dailyNotionalUsedUsd: 0, ordersInLastMinute: 0, registry },

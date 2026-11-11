@@ -2,7 +2,18 @@ import { describe, expect, it } from "vitest";
 import { compileAction } from "../src/actions/index.js";
 import { type ActionIntentInput, parseActionIntent } from "../src/intents/index.js";
 import { generateCloid } from "../src/actions/cloid.js";
-import { type AccountBook, type AccountOrder, coveredSize, createGuardianPolicy, evaluatePolicy, type Policy, type PolicyContext, positionCovered, stopCanFill } from "../src/policy/index.js";
+import {
+  type AccountBook,
+  type AccountOrder,
+  coveredSize,
+  createGuardianPolicy,
+  evaluatePolicy,
+  marketTriggerSlippageFor,
+  type Policy,
+  type PolicyContext,
+  positionCovered,
+  stopCanFill,
+} from "../src/policy/index.js";
 import { mainnetRegistry } from "./helpers.js";
 
 const registry = mainnetRegistry();
@@ -37,8 +48,15 @@ const ctx = (over: Partial<PolicyContext> = {}): PolicyContext => ({
 });
 
 const check = (intent: ActionIntentInput, c: Partial<PolicyContext> = {}) => {
-  const compiled = compileAction(parseActionIntent(intent), { registry, now: NOW, builder: BUILDER, getMidPrice: () => "100000" });
-  return evaluatePolicy({ kind: "compiled", compiled, expiresAfter: NOW + 15_000 }, ctx(c));
+  const context = ctx(c);
+  const compiled = compileAction(parseActionIntent(intent), {
+    registry,
+    now: NOW,
+    builder: BUILDER,
+    getMidPrice: () => "100000",
+    marketTriggerSlippageBps: marketTriggerSlippageFor(context.policy, context.markPrices),
+  });
+  return evaluatePolicy({ kind: "compiled", compiled, expiresAfter: NOW + 15_000 }, context);
 };
 const codes = (d: ReturnType<typeof evaluatePolicy>) => d.violations.map((v) => v.code);
 const cancel = (oid: number, coin = "BTC", origin = "guardian"): ActionIntentInput => ({ kind: "cancel", cancels: [{ coin, oid }], origin }) as ActionIntentInput;
@@ -246,7 +264,7 @@ describe("stop coverage of the whole position on entries (stops required)", () =
       type: "order",
       orders: [
         order({ b: true, p: "100000", s: "0.01", t: { limit: { tif: "Gtc" } } }),
-        order({ b: false, p: "85500", s: "0.01", r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } }),
+        order({ b: false, p: "90250", s: "0.01", r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } }),
         order({ b: false, p: "105000", s: "0.5", t: { limit: { tif: "Gtc" } } }),
         order({ b: true, p: "121000", s: "0.5", r: true, t: { trigger: { isMarket: true, triggerPx: "110000", tpsl: "sl" } } }),
       ],
@@ -273,7 +291,7 @@ describe("stop coverage of the whole position on entries (stops required)", () =
   it("allows a batchModify that moves cover between the stops of a partly covered position, not one that lowers it", () => {
     // Long 1 BTC with stops of 0.5 (oid 11) and 0.3 (oid 14): 0.8 covered.
     const partly = book({ positions: [{ coin: "BTC", size: 1, entryPrice: 100_000 }], orders: [stop, { ...stop, oid: 14, cloid: undefined, size: 0.3 }] });
-    const stopWire = (s: string) => ({ a: 0, b: false, p: "85500", s, r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } });
+    const stopWire = (s: string) => ({ a: 0, b: false, p: "90250", s, r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } });
     const batch = (a: string, b: string) => ({ type: "batchModify", modifies: [{ oid: 11, order: stopWire(a) }, { oid: 14, order: stopWire(b) }] });
     const run = (a: string, b: string) => evaluatePolicy({ kind: "wire", action: batch(a, b), expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ accountBook: partly }));
     expect(run("0.3", "0.5").allowed).toBe(true);
@@ -310,7 +328,7 @@ describe("stop coverage of the whole position on entries (stops required)", () =
       type: "order",
       orders: [
         { a: 0, b: true, p: "100000", s: "0.01", r: false, t: { limit: { tif: "Gtc" } } },
-        stopWire("0.01", "96000", "86400"),
+        stopWire("0.01", "96000", "91200"),
         { a: 0, b: true, p: "85000", s: "1", r: false, t: { limit: { tif: "Gtc" } } },
         stopWire("1", "81000", "72900"),
         stopWire("2", "88500", "79650"),
@@ -323,7 +341,7 @@ describe("stop coverage of the whole position on entries (stops required)", () =
     expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
     expect(d.violations[0]!.message).toContain("the BTC position of 2.01 needs stop-losses within 5% of its entry");
     // Stops within 5% of the highest price any fill could give (100,000) cover it.
-    const near = { ...wire, orders: [wire.orders[0], wire.orders[1], wire.orders[2], stopWire("1", "81000", "72900"), stopWire("2", "95500", "85950")] };
+    const near = { ...wire, orders: [wire.orders[0], wire.orders[1], wire.orders[2], stopWire("1", "81000", "72900"), stopWire("2", "95500", "90725")] };
     expect(evaluatePolicy({ kind: "wire", action: near, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ policy: tight, accountBook: uncovered })).allowed).toBe(true);
   });
 });
