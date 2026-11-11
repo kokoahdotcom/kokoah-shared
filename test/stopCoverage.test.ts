@@ -416,6 +416,26 @@ describe("partly filled entries with an attached stop-loss (stops required)", ()
     expect(check(add, { accountBook: partly({ orders: [parent, child, own] }) }).allowed).toBe(true);
   });
 
+  it("refuses cancelling or changing a waiting attached stop on its own, should Hyperliquid list it as an order", () => {
+    const child: AccountOrder = { ...stop, oid: 31, cloid: undefined, size: 0.5 };
+    const own: AccountOrder = { ...stop, oid: 40, cloid: undefined, size: 0.2 };
+    const d = check(cancel(31), { accountBook: partly({ orders: [parent, child, own] }) });
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(d.violations[0]!.message).toBe("Order 31 is the stop-loss attached to the BTC order 30, which Hyperliquid places once that order fills; cancel or change that order together with it instead.");
+    // Also for an entry that hasn't filled yet, and for a modify that moves it.
+    expect(codes(check(cancel(31), { accountBook: partly({ positions: [], orders: [{ ...parent, filledSize: 0 }, child] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    const moveChild = { kind: "modify", target: { oid: 31 }, order: { coin: "BTC", side: "sell", orderType: "stopMarket", size: "0.5", triggerPrice: "70000", reduceOnly: true }, origin: "guardian" } as ActionIntentInput;
+    expect(codes(check(moveChild, { accountBook: partly({ orders: [parent, child, own] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    // Together with its entry: what the partly filled entry needs decides (a stop of its own covers the position here).
+    const both = { kind: "cancel", cancels: [{ coin: "BTC", oid: 30 }, { coin: "BTC", oid: 31 }], origin: "guardian" } as ActionIntentInput;
+    expect(check(both, { accountBook: partly({ orders: [parent, child, own] }) }).allowed).toBe(true);
+    expect(codes(check(both, { accountBook: partly({ orders: [parent, child] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    // An exempt bot's own entry: its own stop.
+    const bots: Policy = { ...policy, allowedOrigins: ["guardian", "bot"], botEntriesWithoutStopLoss: true };
+    const botChild = { ...child, cloid: generateCloid("bot") };
+    expect(check(cancel(31, "BTC", "bot"), { policy: bots, accountBook: partly({ orders: [parent, botChild] }) }).allowed).toBe(true);
+  });
+
   it("survives malformed attached stops from an older caller", () => {
     const odd = { ...parent, attachedStops: undefined as unknown as number[] };
     expect(check(cancel(30), { accountBook: partly({ orders: [odd] }) }).allowed).toBe(true);

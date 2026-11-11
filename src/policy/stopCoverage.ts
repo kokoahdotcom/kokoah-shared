@@ -256,6 +256,20 @@ export function stopCoverageProblems(input: {
       `${missing.length === 1 ? `Order ${shown} isn't` : `Orders ${shown}${missing.length > 5 ? ` and ${missing.length - 5} more` : ""} aren't`} among the account's open orders on the markets this names, so the required stop-losses can't be checked; nothing is cancelled or changed.`,
     );
   }
+  // A stop-loss still waiting for its entry (should Hyperliquid list it as an order of its own) is that entry's cover
+  // once it fills: it goes only with its entry, in the same action, or as a free target.
+  const parentOf = new Map<number, number>();
+  book.orders.forEach((o, i) => {
+    if (!o.reduceOnly && Array.isArray(o.attachedStops)) for (const oid of o.attachedStops) if (!parentOf.has(oid)) parentOf.set(oid, i);
+  });
+  for (const i of [...removed, ...replaced.keys()]) {
+    const child = book.orders[i]!;
+    const parent = parentOf.get(child.oid);
+    if (free.has(i) || parent === undefined || parent === i || removed.has(parent) || replaced.has(parent)) continue;
+    problems.push(
+      `Order ${child.oid} is the stop-loss attached to the ${child.coin} order ${book.orders[parent]!.oid}, which Hyperliquid places once that order fills; cancel or change that order together with it instead.`,
+    );
+  }
   const max = input.maxStopLossDistancePct;
   // Partly filled entries this cancels or changes whose attached stop-loss goes with them, by coin and side.
   const dropped = new Map<string, { isBuy: boolean; stops: Set<number> }>();
