@@ -118,7 +118,8 @@ describe("scrubPhrases", () => {
       ["en Word #1:", PHRASE_CAPS.split(" ").map((w, i) => `Word #${i + 1}: ${w}`).join("\n")],
     ] as const) {
       expect(scrubPhrases(written), name).toContain("[phrase]");
-      expect(scrubPhrases(written), name).not.toContain(name.startsWith("en") ? "Legal" : name.startsWith("zh") ? zh[5]! : "\u0000");
+      const words = name.startsWith("en") ? ["Legal", "winner"] : name.startsWith("zh") ? zh : name.startsWith("ko") ? korean.slice(300, 312) : japanese.slice(300, 312);
+      for (const w of words) expect(scrubPhrases(written), `${name}: ${w}`).not.toContain(w);
     }
   });
 
@@ -150,6 +151,8 @@ describe("scrubPhrases", () => {
       "1分 5分 15分 1时 4时 1日",
       "1分、5分、15分、1时、4时、1日",
       "第1、第2、第3、第4、第5、第6天",
+      "第1.1节 第1.2节 第1.3节 第1.4节 第1.5节 第1.6节",
+      "1.5元 2.5元 3.5元 4.5元 5.5元 6.5元",
       "２０２６年１１月１１日１０时３０分１５秒",
       "2026년 11월 11일",
     ])

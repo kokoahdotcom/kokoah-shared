@@ -121,10 +121,11 @@ function listGap(gap: string): boolean {
 }
 /**
  * Numbers between one-character words (the Chinese lists) join them only in a list (a line break or numbering, also
- * `1、` and full-width): "2026年11月11日" and "1分 5分 15分" are dates and timeframes.
+ * ` 1、` and full-width): "2026年11月11日", "1分 5分 15分", "第1.1节" and "1.5元" are dates, timeframes, sections and
+ * prices.
  */
 const chineseGap = (gap: string): boolean =>
-  !/[0-9０-９]/.test(gap) || /\n/.test(gap) || /[0-9０-９][.):．）：]|\s[0-9０-９]+、|\([0-9]+\)|（[0-9０-９]+）|["'][0-9]+["']\s*:/.test(gap);
+  !/[0-9０-９]/.test(gap) || /\n/.test(gap) || /[0-9０-９][.):．）：](?![0-9０-９])|\s[0-9０-９]+、|\([0-9]+\)|（[0-9０-９]+）|["'][0-9]+["']\s*:/.test(gap);
 /** No BIP-39 word is longer (in UTF-16 units, before folding): longer runs of letters are never looked up. */
 const MAX_WORD = 16;
 
