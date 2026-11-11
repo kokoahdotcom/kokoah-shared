@@ -255,16 +255,22 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
       checkCoin(coin);
       if (!(lev <= policy.maxLeverage)) add("LEVERAGE_EXCEEDED", `Leverage ${lev}x is above the policy maximum of ${policy.maxLeverage}x.`);
       // Raising the leverage of an open isolated position takes margin out of it, which no notional cap covers: like
-      // removing margin, automation (see updateIsolatedMargin below) may lower it, never raise it.
-      const isolated = wire ? wire.isCross === false : intent?.kind === "updateLeverage" && intent.marginMode === "isolated";
-      if (isolated && isAutomation(policy, origin) && coin !== undefined) {
+      // removing margin, automation (see updateIsolatedMargin below) may lower it, never raise it, nor switch the
+      // position's margin mode. Lowering it only adds margin to the position, as adding margin does.
+      const cross = wire ? wire.isCross !== false : intent?.kind === "updateLeverage" && intent.marginMode !== "isolated";
+      if (isAutomation(policy, origin) && coin !== undefined) {
         const now = context.isolatedPositionLeverage;
         if (now === undefined) {
-          if (context.requireIsolatedPositions === true) {
+          if (context.requireIsolatedPositions === true && !cross) {
             add("ACTION_TYPE_NOT_ALLOWED", `The account's isolated ${coin} position could not be checked, so its leverage is not changed.`);
+          } else if (context.requireIsolatedPositions === true) {
+            add("ACTION_TYPE_NOT_ALLOWED", `The account's ${coin} position could not be checked, so its margin mode is not changed.`);
           }
-        } else if (Object.hasOwn(now, coin) && !(lev <= (now[coin] as number))) {
-          add("ACTION_TYPE_NOT_ALLOWED", `Automation may lower the leverage of the isolated ${coin} position, not raise it (from ${now[coin]}x to ${lev}x): that takes margin out of it.`);
+        } else if (Object.hasOwn(now, coin)) {
+          if (cross) add("ACTION_TYPE_NOT_ALLOWED", `Automation may not switch the open isolated ${coin} position to cross margin.`);
+          else if (!(lev <= (now[coin] as number))) {
+            add("ACTION_TYPE_NOT_ALLOWED", `Automation may lower the leverage of the isolated ${coin} position, not raise it (from ${now[coin]}x to ${lev}x): that takes margin out of it.`);
+          }
         }
       }
       break;
@@ -446,7 +452,7 @@ function checkOrderLegs(
         limitPrice: leg.price,
         bandPct: band,
         label: leg.coin,
-        reduceOnly: leg.reduceOnly,
+        reduceOnly: leg.reduceOnly === true,
         isBuy: leg.isBuy,
         tpsl: leg.tpsl ?? "sl",
       });
@@ -462,7 +468,7 @@ function checkOrderLegs(
         mark,
         bandPct: band,
         label: leg.coin,
-        reduceOnly: leg.reduceOnly,
+        reduceOnly: leg.reduceOnly === true,
       });
       for (const p of check.problems) add("PRICE_OUTSIDE_BAND", p);
     }

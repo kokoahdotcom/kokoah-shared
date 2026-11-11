@@ -271,7 +271,10 @@ describe("order limits", () => {
     expect(codes(evaluatePolicy({ kind: "wire", action: compiled.action as never, expiresAfter: NOW + 1000, origin: "bot" }, ctx(open)))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
     // No isolated position there, cross margin, or the user's own hand: unchanged.
     expect(evalIntent(lev(8, "guardian"), { isolatedPositionLeverage: {} }).allowed).toBe(true);
-    expect(evalIntent(lev(8, "guardian", "cross"), open).allowed).toBe(true);
+    // Nor may it switch the open isolated position to cross margin; cross elsewhere is unchanged.
+    expect(codes(evalIntent(lev(3, "guardian", "cross"), open))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(codes(evaluatePolicy({ kind: "wire", action: { type: "updateLeverage", asset: 0, isCross: true, leverage: 3 }, expiresAfter: NOW + 1000, origin: "bot" }, ctx(open)))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(evalIntent(lev(8, "guardian", "cross"), { isolatedPositionLeverage: { ETH: 5 } }).allowed).toBe(true);
     expect(evalIntent(lev(8, "manual"), open).allowed).toBe(true);
     // A key without manual trading is automation whatever the origin says.
     expect(codes(evalIntent(lev(8, "manual"), { ...open, policy: { ...policy, allowedOrigins: ["guardian", "manual"] } }))).toEqual([]);
@@ -279,7 +282,8 @@ describe("order limits", () => {
     // A signer that must read the account refuses when it couldn't; previews don't check.
     expect(codes(evalIntent(lev(3, "guardian"), { requireIsolatedPositions: true }))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
     expect(evalIntent(lev(8, "guardian")).allowed).toBe(true);
-    expect(evalIntent(lev(8, "guardian", "cross"), { requireIsolatedPositions: true }).allowed).toBe(true);
+    expect(codes(evalIntent(lev(8, "guardian", "cross"), { requireIsolatedPositions: true }))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(evalIntent(lev(8, "guardian", "cross"), { requireIsolatedPositions: true, isolatedPositionLeverage: {} }).allowed).toBe(true);
   });
 
   it("caps the isolated margin an automation key adds at once at the order limit", () => {
