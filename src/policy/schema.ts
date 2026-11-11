@@ -55,7 +55,8 @@ export const PolicySchema = v.strictObject({
   allowedVaultAddresses: v.array(AddressSchema),
   /**
    * Every order action must carry this builder `b` with a fee of at most `f` (the standard fee; a promotion charges
-   * less). Null: no builder requirement.
+   * less). Null: no builder requirement. When the standard fee rises, a policy signed for a lower `f` refuses every
+   * order and must be signed again (builder.ts `policyBuilderOutdated`).
    */
   requiredBuilder: v.nullable(
     v.strictObject({
