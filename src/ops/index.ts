@@ -107,7 +107,7 @@ const PHRASE_GAP = 16;
  * object's quoted key (`"10": "`).
  */
 const NUMBERING = /[0-9０-９]+[.):．）：]|#[0-9]+[.):]?|\([0-9]+\)|（[0-9０-９]+）|["'][0-9]+["']\s*:/g;
-/** How the stretch between two words joins them: not at all, as prose may (`;`, `-`), as spaces do, or as a list does. */
+/** How the stretch between two words joins them: not at all, as prose or names may (`;`, `-`, `_`), as spaces do, or as a list does. */
 const enum Gap {
   None,
   Weak,
@@ -117,19 +117,19 @@ const enum Gap {
 /**
  * How the stretch between two words could be a list's ({@link Gap}). A list's marks: line breaks, numbering, commas,
  * pipes and bullets, and quotes and brackets with a comma, a line break or a quoted key (JSON, a Python list). Only
- * spaces and digits: {@link Gap.Space}. Semicolons and hyphens, which prose uses too: {@link Gap.Weak}. What ends or
- * runs through a sentence (`.`, `!`, `?`, `:`, parentheses, arrows, slashes, dashes, underscores, backticks, markup)
- * never joins.
+ * spaces and digits: {@link Gap.Space}. Semicolons, hyphens and underscores, which prose and names (`user_agent`) use
+ * too: {@link Gap.Weak}. What ends or runs through a sentence (`.`, `!`, `?`, `:`, parentheses, arrows, slashes, dashes,
+ * backticks, markup) never joins.
  */
 function listGap(gap: string): Gap {
   if (gap.length > PHRASE_GAP) return Gap.None;
   const numbered = NUMBERING.test(gap);
   NUMBERING.lastIndex = 0;
   const rest = gap.replace(NUMBERING, " ");
-  if (!/^[\s0-9０-９,;|•*、，；"'[\]{}-]*$/.test(rest)) return Gap.None;
+  if (!/^[\s0-9０-９,;|•*、，；"'[\]{}_-]*$/.test(rest)) return Gap.None;
   if (/["'[\]{}]/.test(rest) && !/[,\n]/.test(rest) && !/["']\d+["']\s*:/.test(gap)) return Gap.None;
   if (numbered || /[\n,|•*、，"'[\]{}]/.test(rest)) return Gap.List;
-  return /[;；-]/.test(rest) ? Gap.Weak : Gap.Space;
+  return /[;；_-]/.test(rest) ? Gap.Weak : Gap.Space;
 }
 /**
  * A run joined anywhere only as prose may join words ({@link Gap.Weak}; for Korean, also spaces: its common nouns
@@ -151,9 +151,11 @@ const MAX_WORD = 16;
 /**
  * Hides recovery phrases: a run of at least {@link PHRASE_RUN} words of one BIP-39 list becomes `[phrase]`, also
  * inside a longer run of words. Words match in any case and with or without accents, and what lists put between words
- * may stand between them ({@link listGap}): spaces, line breaks, numbering (`1.`, `2)`), commas, semicolons, hyphens,
- * pipes, quotes and brackets (JSON); never the end of a sentence or other prose punctuation. Words written with
- * nothing between them (Chinese without spaces) aren't found. The backend's error reports (src/routes/support.ts) and
+ * may stand between them ({@link listGap}): spaces, line breaks, numbering (`1.`, `2)`), commas, pipes, quotes and
+ * brackets (JSON); never the end of a sentence or other prose punctuation. Where words are joined only by semicolons,
+ * hyphens or underscores, or in Korean by spaces (as prose, names and Korean sentences join them), a run counts from
+ * {@link LONG_RUN} words: a whole phrase. Words written with nothing between them (Chinese without spaces) aren't
+ * found. The backend's error reports (src/routes/support.ts) and
  * AI checks, and the app's error reports (src/services/errorReports.ts), use it as well as {@link scrubOpsText}.
  */
 export function scrubPhrases(s: string): string {

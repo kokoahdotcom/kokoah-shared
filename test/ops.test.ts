@@ -79,6 +79,7 @@ describe("scrubPhrases", () => {
       words.join(" | "),
       words.join("; "),
       words.join(";"),
+      words.join("_"),
       words.join("\t"),
       JSON.stringify(words),
       JSON.stringify(words, null, 4),
@@ -171,6 +172,22 @@ describe("scrubPhrases", () => {
       // A few milliseconds each; the bound only catches work that grows faster than the text (a loaded machine is slow).
       expect(performance.now() - t0, input.slice(0, 12)).toBeLessThan(1000);
     }
+  });
+
+  it("needs a whole phrase only where words are joined as prose, names or Korean sentences join them", () => {
+    const words = PHRASE_CAPS.toLowerCase().split(" ");
+    // Six words joined by hyphens, semicolons or underscores, or by spaces in Korean, stay; twelve are hidden.
+    for (const join of ["-", "; ", "_"]) {
+      expect(scrubPhrases(words.slice(0, 6).join(join)), join).toBe(words.slice(0, 6).join(join));
+      expect(scrubPhrases(words.join(join)), join).toBe("[phrase]");
+    }
+    const ko = korean.slice(300, 312);
+    expect(scrubPhrases(ko.slice(0, 6).join(" "))).toBe(ko.slice(0, 6).join(" "));
+    expect(scrubPhrases(ko.join(" "))).toBe("[phrase]");
+    // A list's marks still hide six: Korean commas too, and a list next to a hyphen.
+    expect(scrubPhrases("가격, 변동, 시장, 상황, 확인, 부탁")).toBe("[phrase]");
+    expect(scrubPhrases(ko.slice(0, 6).join(", "))).toBe("[phrase]");
+    expect(scrubPhrases("legal, winner, thank, year, wave, sausage-worth")).toBe("[phrase]-worth");
   });
 
   it("keeps the text around a phrase and hides each phrase once", () => {
