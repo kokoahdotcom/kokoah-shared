@@ -6,6 +6,19 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- `policy`: a trigger's limit may sit max(`priceBandPct`, 10%) from its trigger only when it is reduce-only and away from
+  the mark (more than `priceBandPct` from it); an entry trigger, or one near the mark, gets `priceBandPct`
+  (`triggerLimitAllowancePct`). `checkTriggerPriceBand` and `triggerLimitBandProblem` take an optional `reduceOnly`
+  (omitted: the earlier rule, for previews). `compileAction` takes `marketTriggerSlippageBps` (per market trigger leg;
+  default 1000) and `marketTriggerSlippageFor(policy, marks)` gives the signers' value; `marketTriggerLimitPrice` takes
+  `slippageBps`.
+- `policy`: `AccountOrder` has `filledSize` and `attachedStops` (both required). A cancel or modify of a partly filled
+  entry with an attached stop-loss is `STOP_LOSS_REQUIRED` unless stops on the book cover the whole position.
+- `policy`: `stopCanFill` needs a stop-limit's limit beyond its trigger (at the trigger no longer counts as cover).
+- `policy`: `PolicyContext.isolatedPositionLeverage` and `requireIsolatedPositions`: automation's `updateLeverage` may not
+  raise the leverage of an open isolated position.
+
 ### Added
 - `policy`: stop coverage. `PolicyContext.requireStopCoverage` (opt-in) with `accountBook` (the traded account's
   positions and resting orders, read by the signer itself): under `requireStopLossForNewEntries`, a cancel or modify (the

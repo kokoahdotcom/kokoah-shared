@@ -280,9 +280,20 @@ Other rules:
   `RESTING_PRICE_BAND_PCT` (50%) from mark, or `priceBandPct` if wider; this stops typos like 8500 for 85000. The mid is
   optional (`context.midPrices`) and must come from the evaluator's own market data. Not a signed field: signed
   policies are unchanged.
-- Trigger orders are valued at `max(limit, trigger, mark)`. Their limit must be within max(`priceBandPct`, 10%) of the
-  trigger; a trigger that has not fired yet may sit up to the resting band from mark; a trigger that would already
-  fire at the current mark is price-banded against mark like an order that executes now.
+- Trigger orders are valued at `max(limit, trigger, mark)`. Their limit must be within the trigger allowance of the
+  trigger (`triggerLimitAllowancePct`): max(`priceBandPct`, 10%) for a reduce-only trigger away from the mark, and
+  `priceBandPct` for an entry or a trigger within `priceBandPct` of the mark (it fires about as soon as an order that
+  executes now). A trigger that has not fired yet may sit up to the resting band from mark; a trigger that would already
+  fire at the current mark is price-banded against mark like an order that executes now. Signers compile market
+  triggers within it (`compileAction`'s `marketTriggerSlippageBps` with `marketTriggerSlippageFor(policy, marks)`);
+  the default 10% limit is refused there under a tighter band. Assumed (to check on testnet): Hyperliquid fills a
+  market trigger no worse than its limit price.
+- With stops required and the account's book (`requireStopCoverage`), a cancel or modify of a partly filled entry that
+  has an attached stop-loss is refused unless stop-losses on the book cover the whole position: Hyperliquid places an
+  order's attached TP/SL only once it fills completely and cancels them with a partly filled order (its TP/SL docs).
+  A stop-limit counts as cover only with its limit beyond the trigger.
+- With `isolatedPositionLeverage` (the account's isolated positions, read by the signer), automation may lower the
+  leverage of an isolated position but not raise it (that takes margin out of it, like removing margin).
 - `requireStopLossForNewEntries`: an entry needs an attached stop covering its full size on the losing side (and within
   `maxStopLossDistancePct` of the entry, when set), or an existing exchange stop (`context.hasStopLoss`). Modifies of
   non-reduce-only orders need an existing stop, and are blocked by the daily loss lock like new entries.
