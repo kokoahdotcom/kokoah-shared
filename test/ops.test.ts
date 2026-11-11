@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { czech, french, italian, japanese, korean, portuguese, simplifiedChinese, spanish, traditionalChinese } from "viem/accounts";
 import {
   OpsAggregator,
   cleanOpsEvent,
@@ -62,14 +63,122 @@ describe("scrubPhrases", () => {
     expect(scrubPhrases("repro legal winner thank year wave sausage n=1")).toBe("repro [phrase] n=1");
   });
 
+  it("hides a phrase written as a list: numbered, one word per line, dashes, pipes, semicolons, JSON, a table", () => {
+    const words = PHRASE_CAPS.toLowerCase().split(" ");
+    for (const written of [
+      words.map((w, i) => `${i + 1}. ${w}`).join("\n"),
+      words.map((w, i) => `${i + 1}) ${w}`).join(" "),
+      words.map((w, i) => `${i + 1}: ${w}`).join("\n"),
+      words.map((w, i) => `(${i + 1}) ${w}`).join(" "),
+      words.map((w, i) => `#${i + 1} ${w}`).join("\n"),
+      words.map((w) => `- ${w}`).join("\n"),
+      words.map((w) => `• ${w}`).join("\n"),
+      words.join("\n"),
+      words.join("\r\n"),
+      words.join("-"),
+      words.join(" | "),
+      words.join("; "),
+      words.join(";"),
+      words.join("_"),
+      words.join("\t"),
+      JSON.stringify(words),
+      JSON.stringify(words, null, 4),
+      `['${words.join("', '")}']`,
+      JSON.stringify(Object.fromEntries(words.map((w, i) => [String(i + 1), w]))),
+      JSON.stringify(Object.fromEntries(words.map((w, i) => [String(i + 1), w])), null, 2),
+      words.join(","),
+      `| ${words.map((w, i) => `${i + 1} | ${w}`).join(" | ")} |`,
+      words.map((w) => `**${w}**`).join(" "),
+      words.map((w, i) => (i % 2 ? w.toUpperCase() : w)).join(" "),
+    ]) {
+      const out = scrubPhrases(`mine: ${written} ok`);
+      expect(out, written).toContain("[phrase]");
+      expect(out, written).not.toMatch(/legal|winner|thank|wave|sausage|worth|useful|yellow/i);
+    }
+  });
+
+  it("hides phrases of BIP-39's other word lists, with or without accents", () => {
+    const lists = { spanish, french, italian, portuguese, czech, japanese, korean, simplifiedChinese, traditionalChinese };
+    for (const [name, list] of Object.entries(lists)) {
+      const words = list.slice(300, 312);
+      for (const written of [words.join(name === "japanese" ? "\u3000" : " "), words.join(", "), words.map((w, i) => `${i + 1}. ${w}`).join("\n")]) {
+        expect(scrubPhrases(written), `${name}: ${written}`).toMatch(/^(1\. )?\[phrase\]$/);
+      }
+    }
+    const plain = spanish.slice(0, 12).map((w) => w.normalize("NFKD").replace(/\p{M}/gu, "").toUpperCase());
+    expect(scrubPhrases(plain.join(" "))).toBe("[phrase]");
+    // Numbered on one line, also the CJK ways and full-width digits.
+    const zh = simplifiedChinese.slice(300, 312);
+    for (const [name, written] of [
+      ["zh 1、", zh.map((w, i) => `${i + 1}、${w}`).join(" ")],
+      ["zh （1）", zh.map((w, i) => `（${i + 1}）${w}`).join(" ")],
+      ["zh １．", zh.map((w, i) => `${String.fromCharCode(0xff11 + (i % 9))}．${w}`).join(" ")],
+      ["ko 1", korean.slice(300, 312).map((w, i) => `${i + 1} ${w}`).join(" ")],
+      ["ja 1", japanese.slice(300, 312).map((w, i) => `${i + 1} ${w}`).join(" ")],
+      ["en Word #1:", PHRASE_CAPS.split(" ").map((w, i) => `Word #${i + 1}: ${w}`).join("\n")],
+    ] as const) {
+      expect(scrubPhrases(written), name).toContain("[phrase]");
+      expect(scrubPhrases(written), name).not.toContain(name.startsWith("en") ? "Legal" : name.startsWith("zh") ? zh[5]! : "\u0000");
+    }
+  });
+
   it("keeps ordinary text and short runs of those words", () => {
     for (const ordinary of [
       "TypeError: Cannot read properties of null (reading 'extensions')",
       "That recovery phrase is not valid.",
       "the order was rejected because the price moved too far",
       "legal winner thank year wave",
+      "legal-winner-thank-year-wave",
+      // The end of a sentence or a clause, and prose punctuation, join no list.
+      "Kokoah started tracking this market just now. Try again in a few minutes.",
+      "In Settings (account menu) → Security → This device, choose what protects the key",
+      "the order (market or limit) / price / size `stop` → filled",
+      "price — and then the market moved over time",
+      "Use email, Google or a passkey, or connect a wallet you already have. You sign one readable message.",
+      "Pro order types that work over time: Scale, Chase, TWAP, Trailing stop and Bracket.",
+      "close half of my BTC long at 65000 and set a stop at 60000",
+      "Buy 0.5 ETH at market, stop loss 5% below entry, take profit at 4000",
+      "open a 3x short on xyz:TSLA with 200 USDC, limit 412.5",
+      "비트코인 가격이 오늘 많이 올랐어요. 지금 롱 포지션을 열어도 될까요?",
+      "今日はビットコインが上がりました。ロングを開いてもいいですか？",
+      "比特币今天上涨了很多。我现在可以开多单吗？",
+      "El bitcoin subió mucho hoy. ¿Puedo abrir una posición larga ahora?",
+      "Le bitcoin a beaucoup monté aujourd'hui. Puis-je ouvrir une position longue maintenant ?",
+      "Bitcoin dnes hodně vzrostl. Můžu teď otevřít dlouhou pozici?",
+      // Dates and timeframes: one-character words with numbers between them.
+      "2026年11月11日10时30分15秒",
+      "1分 5分 15分 1时 4时 1日",
+      "1分、5分、15分、1时、4时、1日",
+      "第1、第2、第3、第4、第5、第6天",
+      "２０２６年１１月１１日１０时３０分１５秒",
+      "2026년 11월 11일",
     ])
       expect(scrubPhrases(ordinary), ordinary).toBe(ordinary);
+  });
+
+  it("stays fast on many short words, also accented or one CJK character each", () => {
+    for (const input of ["é ".repeat(4000), `${simplifiedChinese.slice(0, 2000).join(" ")} `.repeat(2), `${japanese.slice(0, 800).join(" ")}`, "a ".repeat(4000), "ab.".repeat(2700)]) {
+      const t0 = performance.now();
+      scrubPhrases(input.slice(0, 8000));
+      scrubOpsText(input);
+      // A few milliseconds each; the bound only catches work that grows faster than the text (a loaded machine is slow).
+      expect(performance.now() - t0, input.slice(0, 12)).toBeLessThan(1000);
+    }
+  });
+
+  it("keeps the text around a phrase and hides each phrase once", () => {
+    const words = PHRASE_CAPS.split(" ");
+    expect(scrubPhrases(`a: ${words.join("\n")}\nb: ${PHRASE}.`)).toBe("a: [phrase]\nb: [phrase].");
+    expect(scrubPhrases(`${words.slice(0, 6).join(" ")}. ${words.slice(6).join(" ")}`)).toBe("[phrase]. [phrase]");
+    expect(scrubPhrases("[phrase]")).toBe("[phrase]");
+  });
+
+  it("keeps hiding a secret whose key's name is made of list words", () => {
+    for (const key of ["LEGAL_WINNER_THANK_YEAR_WAVE_TOKEN", "legal-winner-thank-year-wave-session", "LEGAL_WINNER_THANK_YEAR_WAVE_PRIVATE_KEY", "USER_ACCOUNT_ACCESS_DEVICE_CLIENT_SECRET"]) {
+      const out = scrubOpsText(`${key}=hunter2`);
+      expect(out, key).not.toContain("hunter2");
+      expect(out, key).toContain("[redacted]");
+    }
   });
 
   it("is part of scrubOpsText, also for a phrase in a quoted secret", () => {

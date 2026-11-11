@@ -19,7 +19,7 @@
  *   a sender marks exactly those and never posts a message (or its mention) twice.
  */
 
-import { english } from "viem/accounts";
+import { czech, english, french, italian, japanese, korean, portuguese, simplifiedChinese, spanish, traditionalChinese } from "viem/accounts";
 
 export type OpsSeverity = "critical" | "error" | "warning";
 
@@ -81,35 +81,121 @@ export interface OpsProblemNotice {
 const SECRET_KEYS =
   "password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key|apikey|x-api-key|authorization|auth|cookie|set-cookie|session|signature|private[_-]?key|privatekey|mnemonic|seed|hmac|kek|credential|credentials";
 
-/** BIP-39's English words: the recovery phrases of Ethereum and Bittensor wallets are made of them. */
-const PHRASE_WORDS: ReadonlySet<string> = new Set(english);
-/** This many of those words in a row are taken for a recovery phrase (or part of one): ordinary text seldom has them. */
-export const PHRASE_RUN = 6;
+/** A word as recovery phrases are compared: lowercase, with accents and other marks taken off (BIP-39 uses NFKD). */
+const foldWord = (w: string): string =>
+  /^[A-Za-z]+$/.test(w) ? w.toLowerCase() : /^[\u4e00-\u9fff]+$/.test(w) ? w : w.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 
 /**
- * Hides recovery phrases: a run of at least {@link PHRASE_RUN} BIP-39 words (any case, between spaces, commas or line
- * breaks) becomes `[phrase]`, also inside a longer run of words. The backend's error reports (src/routes/support.ts) and
- * the app's (src/services/errorReports.ts) use it as well as {@link scrubOpsText}.
+ * BIP-39's ten word lists (English, which Ethereum and Bittensor wallets use, and the Spanish, French, Italian,
+ * Portuguese, Czech, Japanese, Korean and both Chinese ones other wallets offer), each folded with {@link foldWord}.
+ * A phrase's words all come from one list.
+ */
+const PHRASE_LISTS: readonly ReadonlySet<string>[] = [english, spanish, french, italian, portuguese, czech, japanese, korean, simplifiedChinese, traditionalChinese].map(
+  (list) => new Set(list.map(foldWord)),
+);
+/** Both Chinese lists (bits of {@link PHRASE_LISTS}): their words are one character each. */
+const CHINESE_LISTS = (1 << 8) | (1 << 9);
+/** This many of those words in a row are taken for a recovery phrase (or part of one): ordinary text seldom has them. */
+export const PHRASE_RUN = 6;
+/**
+ * The longest stretch without letters that still joins two words of a phrase: what lists put between them (`", "`,
+ * `"\n12. "`, `" | "`, `"-"`, a JSON array's `",\n    "`, a table's `" | 7 | "`).
+ */
+const PHRASE_GAP = 16;
+/**
+ * Numbering a list puts before a word: `12.`, `3)`, `(4)`, `5:`, `#6`, `#7:`, full-width (`８．`, `（９）`), and a JSON
+ * object's quoted key (`"10": "`).
+ */
+const NUMBERING = /[0-9０-９]+[.):．）：]|#[0-9]+[.):]?|\([0-9]+\)|（[0-9０-９]+）|["'][0-9]+["']\s*:/g;
+/**
+ * Whether the stretch between two words could be a list's: only spaces and line breaks, digits and numbering, commas,
+ * semicolons, pipes, hyphens, underscores and bullets, and quotes and brackets with a comma, a line break or a quoted
+ * key (JSON, a Python list). What ends or runs through a sentence (`.`, `!`, `?`, `:`, parentheses, arrows, slashes,
+ * dashes, backticks, markup) never is.
+ */
+function listGap(gap: string): boolean {
+  if (gap.length > PHRASE_GAP) return false;
+  const rest = gap.replace(NUMBERING, " ");
+  if (!/^[\s0-9０-９,;|_•*、，；"'[\]{}-]*$/.test(rest)) return false;
+  return !/["'[\]{}]/.test(rest) || /[,\n]/.test(rest) || /["']\d+["']\s*:/.test(gap);
+}
+/**
+ * Numbers between one-character words (the Chinese lists) join them only in a list (a line break or numbering, also
+ * `1、` and full-width): "2026年11月11日" and "1分 5分 15分" are dates and timeframes.
+ */
+const chineseGap = (gap: string): boolean =>
+  !/[0-9０-９]/.test(gap) || /\n/.test(gap) || /[0-9０-９][.):．）：]|\s[0-9０-９]+、|\([0-9]+\)|（[0-9０-９]+）|["'][0-9]+["']\s*:/.test(gap);
+/** No BIP-39 word is longer (in UTF-16 units, before folding): longer runs of letters are never looked up. */
+const MAX_WORD = 16;
+
+/**
+ * Hides recovery phrases: a run of at least {@link PHRASE_RUN} words of one BIP-39 list becomes `[phrase]`, also
+ * inside a longer run of words. Words match in any case and with or without accents, and what lists put between words
+ * may stand between them ({@link listGap}): spaces, line breaks, numbering (`1.`, `2)`), commas, semicolons, hyphens,
+ * pipes, quotes and brackets (JSON); never the end of a sentence or other prose punctuation. Words written with
+ * nothing between them (Chinese without spaces) aren't found. The backend's error reports (src/routes/support.ts) and
+ * AI checks, and the app's error reports (src/services/errorReports.ts), use it as well as {@link scrubOpsText}.
  */
 export function scrubPhrases(s: string): string {
-  return s.replace(/(?<![A-Za-z])[A-Za-z]{3,8}(?![A-Za-z])(?:[\s,]{1,4}[A-Za-z]{3,8}(?![A-Za-z]))+/g, (run) => {
-    const parts = run.split(/([\s,]+)/);
-    const out: string[] = [];
-    for (let i = 0; i < parts.length; ) {
-      let j = i;
-      while (j < parts.length && PHRASE_WORDS.has(parts[j]!.toLowerCase())) j += 2;
-      if ((j - i) / 2 >= PHRASE_RUN) {
-        out.push("[phrase]");
-        if (j - 1 < parts.length) out.push(parts[j - 1]!);
-        i = j;
-      } else {
-        out.push(parts[i]!);
-        if (i + 1 < parts.length) out.push(parts[i + 1]!);
-        i += 2;
+  // Each word of a list: where it is, the lists it is in (one bit each), and the lists whose run it continues (it
+  // follows a word of the list across a gap a list has). Other words only break runs.
+  const words: { start: number; end: number; in: number; joins: number }[] = [];
+  const folds = new Map<string, number>();
+  let any = 0;
+  let prevEnd = 0;
+  let prevIn = 0;
+  for (const m of s.matchAll(/[\p{L}\p{M}]+/gu)) {
+    const w = m[0];
+    let lists = 0;
+    if (w.length <= MAX_WORD) {
+      const known = folds.get(w);
+      if (known !== undefined) lists = known;
+      else {
+        const folded = foldWord(w);
+        for (let i = 0; i < PHRASE_LISTS.length; i++) if (PHRASE_LISTS[i]!.has(folded)) lists |= 1 << i;
+        if (folds.size < 4096) folds.set(w, lists);
       }
     }
-    return out.join("");
-  });
+    if (lists !== 0) {
+      let joins = prevIn & lists;
+      if (joins !== 0) {
+        const gap = s.slice(prevEnd, m.index);
+        if (!listGap(gap)) joins = 0;
+        else if (!chineseGap(gap)) joins &= ~CHINESE_LISTS;
+      }
+      words.push({ start: m.index, end: m.index + w.length, in: lists, joins });
+    }
+    any |= lists;
+    prevEnd = m.index + w.length;
+    prevIn = lists;
+  }
+  if (any === 0) return s;
+  // Spans to hide, from each list's runs (a run may belong to two lists: the spans then overlap).
+  const spans: [number, number][] = [];
+  for (let list = 0; list < PHRASE_LISTS.length; list++) {
+    const bit = 1 << list;
+    if ((any & bit) === 0) continue;
+    let first = -1;
+    for (let i = 0; i <= words.length; i++) {
+      const w = words[i];
+      const member = w !== undefined && (w.in & bit) !== 0;
+      if (member && first >= 0 && (w.joins & bit) !== 0) continue;
+      if (first >= 0 && i - first >= PHRASE_RUN) spans.push([words[first]!.start, words[i - 1]!.end]);
+      // A word of the list after a gap no list has starts a run of its own.
+      first = member ? i : -1;
+    }
+  }
+  if (spans.length === 0) return s;
+  spans.sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let at = -1;
+  for (const [start, end] of spans) {
+    if (end <= at) continue;
+    // A span that starts inside the previous one only makes it longer.
+    if (start > at) out += `${s.slice(Math.max(at, 0), start)}[phrase]`;
+    at = end;
+  }
+  return out + s.slice(at);
 }
 
 /** Longest text scrubbed (callers keep far less): bounds the work on attacker-supplied text. */
@@ -144,7 +230,6 @@ export function scrubOpsText(input: string): string {
   // …and of paths (`/v1/x?token=…`).
   s = s.replace(/(^|[\s("'])(\/[\w./~%-]*)[?#][^\s)"']*/g, "$1$2");
   s = s.replace(/\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]");
-  s = scrubPhrases(s);
   // `password=…`, `"secret":"…"`, and environment names ending in one (`HMAC_SECRET=`, `OPENROUTER_API_KEY=`).
   s = s.replace(
     new RegExp(`(?<![A-Za-z0-9])((?:[A-Za-z0-9]{1,40}_){0,4}(?:${SECRET_KEYS}))(\\s*[=:]\\s*|"\\s*:\\s*"?|'\\s*:\\s*'?)([^\\s,;&"'}\\]]+)`, "gi"),
@@ -152,6 +237,8 @@ export function scrubOpsText(input: string): string {
   );
   // …and a quoted secret's whole value (`"mnemonic":"word word …"`), which the rule above cuts at the first space.
   s = s.replace(new RegExp(`("(?:${SECRET_KEYS})"\\s*:\\s*)"(?:[^"\\\\]|\\\\.){0,2000}"`, "gi"), '$1"[redacted]"');
+  // Recovery phrases after the key rules: a key's name made of list words (`…_WAVE_TOKEN=`) must still hide its value.
+  s = scrubPhrases(s);
   s = s.replace(/(?<![A-Za-z0-9_-])sk-(?:ant-)?[A-Za-z0-9_-]{16,256}/g, "sk-[redacted]");
   s = s.replace(/(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{30,128}/g, "AIza[redacted]");
   s = s.replace(/(?<![A-Za-z0-9_-])xox[abprs]-[A-Za-z0-9-]{10,256}/g, "xox-[redacted]");
