@@ -107,18 +107,37 @@ const PHRASE_GAP = 16;
  * object's quoted key (`"10": "`).
  */
 const NUMBERING = /[0-9０-９]+[.):．）：]|#[0-9]+[.):]?|\([0-9]+\)|（[0-9０-９]+）|["'][0-9]+["']\s*:/g;
-/**
- * Whether the stretch between two words could be a list's: only spaces and line breaks, digits and numbering, commas,
- * semicolons, pipes, hyphens, underscores and bullets, and quotes and brackets with a comma, a line break or a quoted
- * key (JSON, a Python list). What ends or runs through a sentence (`.`, `!`, `?`, `:`, parentheses, arrows, slashes,
- * dashes, backticks, markup) never is.
- */
-function listGap(gap: string): boolean {
-  if (gap.length > PHRASE_GAP) return false;
-  const rest = gap.replace(NUMBERING, " ");
-  if (!/^[\s0-9０-９,;|_•*、，；"'[\]{}-]*$/.test(rest)) return false;
-  return !/["'[\]{}]/.test(rest) || /[,\n]/.test(rest) || /["']\d+["']\s*:/.test(gap);
+/** How the stretch between two words joins them: not at all, as prose may (`;`, `-`), as spaces do, or as a list does. */
+const enum Gap {
+  None,
+  Weak,
+  Space,
+  List,
 }
+/**
+ * How the stretch between two words could be a list's ({@link Gap}). A list's marks: line breaks, numbering, commas,
+ * pipes and bullets, and quotes and brackets with a comma, a line break or a quoted key (JSON, a Python list). Only
+ * spaces and digits: {@link Gap.Space}. Semicolons and hyphens, which prose uses too: {@link Gap.Weak}. What ends or
+ * runs through a sentence (`.`, `!`, `?`, `:`, parentheses, arrows, slashes, dashes, underscores, backticks, markup)
+ * never joins.
+ */
+function listGap(gap: string): Gap {
+  if (gap.length > PHRASE_GAP) return Gap.None;
+  const numbered = NUMBERING.test(gap);
+  NUMBERING.lastIndex = 0;
+  const rest = gap.replace(NUMBERING, " ");
+  if (!/^[\s0-9０-９,;|•*、，；"'[\]{}-]*$/.test(rest)) return Gap.None;
+  if (/["'[\]{}]/.test(rest) && !/[,\n]/.test(rest) && !/["']\d+["']\s*:/.test(gap)) return Gap.None;
+  if (numbered || /[\n,|•*、，"'[\]{}]/.test(rest)) return Gap.List;
+  return /[;；-]/.test(rest) ? Gap.Weak : Gap.Space;
+}
+/**
+ * A run joined anywhere only as prose may join words ({@link Gap.Weak}; for Korean, also spaces: its common nouns
+ * often follow each other in a sentence) counts only this long: a whole phrase, never a sentence's few words.
+ */
+const LONG_RUN = 12;
+/** The Korean list (a bit of {@link PHRASE_LISTS}). */
+const KOREAN_LIST = 1 << 7;
 /**
  * Numbers between one-character words (the Chinese lists) join them only in a list (a line break or numbering, also
  * ` 1、` and full-width): "2026年11月11日", "1分 5分 15分", "第1.1节" and "1.5元" are dates, timeframes, sections and
@@ -140,7 +159,7 @@ const MAX_WORD = 16;
 export function scrubPhrases(s: string): string {
   // Each word of a list: where it is, the lists it is in (one bit each), and the lists whose run it continues (it
   // follows a word of the list across a gap a list has). Other words only break runs.
-  const words: { start: number; end: number; in: number; joins: number }[] = [];
+  const words: { start: number; end: number; in: number; joins: number; weak: number }[] = [];
   const folds = new Map<string, number>();
   let any = 0;
   let prevEnd = 0;
@@ -159,12 +178,17 @@ export function scrubPhrases(s: string): string {
     }
     if (lists !== 0) {
       let joins = prevIn & lists;
+      let weak = 0;
       if (joins !== 0) {
         const gap = s.slice(prevEnd, m.index);
-        if (!listGap(gap)) joins = 0;
-        else if (!chineseGap(gap)) joins &= ~CHINESE_LISTS;
+        const kind = listGap(gap);
+        if (kind === Gap.None) joins = 0;
+        else {
+          if (!chineseGap(gap)) joins &= ~CHINESE_LISTS;
+          weak = kind === Gap.Weak ? joins : kind === Gap.Space ? joins & KOREAN_LIST : 0;
+        }
       }
-      words.push({ start: m.index, end: m.index + w.length, in: lists, joins });
+      words.push({ start: m.index, end: m.index + w.length, in: lists, joins, weak });
     }
     any |= lists;
     prevEnd = m.index + w.length;
@@ -176,14 +200,28 @@ export function scrubPhrases(s: string): string {
   for (let list = 0; list < PHRASE_LISTS.length; list++) {
     const bit = 1 << list;
     if ((any & bit) === 0) continue;
+    // A run (`first`) and, within it, the stretch joined only by list gaps (`strong`): that stretch counts from
+    // PHRASE_RUN words, the whole run from LONG_RUN.
     let first = -1;
+    let strong = -1;
+    const segment = (from: number, to: number) => {
+      if (from >= 0 && to - from + 1 >= PHRASE_RUN) spans.push([words[from]!.start, words[to]!.end]);
+    };
     for (let i = 0; i <= words.length; i++) {
       const w = words[i];
       const member = w !== undefined && (w.in & bit) !== 0;
-      if (member && first >= 0 && (w.joins & bit) !== 0) continue;
-      if (first >= 0 && i - first >= PHRASE_RUN) spans.push([words[first]!.start, words[i - 1]!.end]);
+      if (member && first >= 0 && (w.joins & bit) !== 0) {
+        if ((w.weak & bit) !== 0) {
+          segment(strong, i - 1);
+          strong = i;
+        }
+        continue;
+      }
+      if (first >= 0 && i - first >= LONG_RUN) spans.push([words[first]!.start, words[i - 1]!.end]);
+      else if (first >= 0) segment(strong, i - 1);
       // A word of the list after a gap no list has starts a run of its own.
       first = member ? i : -1;
+      strong = first;
     }
   }
   if (spans.length === 0) return s;

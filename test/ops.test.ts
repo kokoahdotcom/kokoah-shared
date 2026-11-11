@@ -79,7 +79,6 @@ describe("scrubPhrases", () => {
       words.join(" | "),
       words.join("; "),
       words.join(";"),
-      words.join("_"),
       words.join("\t"),
       JSON.stringify(words),
       JSON.stringify(words, null, 4),
@@ -146,6 +145,11 @@ describe("scrubPhrases", () => {
       "El bitcoin subió mucho hoy. ¿Puedo abrir una posición larga ahora?",
       "Le bitcoin a beaucoup monté aujourd'hui. Puis-je ouvrir une position longue maintenant ?",
       "Bitcoin dnes hodně vzrostl. Můžu teď otevřít dlouhou pozici?",
+      // Korean common nouns in a row, prose joined by `;` or `-`, and column names: no phrase.
+      "오늘 시장 상황 가격 변동 확인 부탁",
+      "내일 아침 시장 분위기 정리 부탁",
+      "While an earlier action is being checked, new orders that add risk wait; reduce-only orders and cancels still go through.",
+      "SELECT user_agent, agent_address, agent_name, valid_until_ms FROM linked_devices",
       // Dates and timeframes: one-character words with numbers between them.
       "2026年11月11日10时30分15秒",
       "1分 5分 15分 1时 4时 1日",
