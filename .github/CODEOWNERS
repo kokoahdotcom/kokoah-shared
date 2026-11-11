@@ -1,5 +1,6 @@
 # From kokoah-infra/ci/CODEOWNERS. Owners: the account that owns the repositories (replace with teams if an
-# organization team is created). Review from code owners is enforced by the branch ruleset on main.
+# organization team is created). GitHub requests a code owner's review on each pull request; nothing enforces it yet,
+# since main has no ruleset for now.
 #
 # The last matching pattern wins, so the general rule comes first.
 
