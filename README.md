@@ -247,7 +247,8 @@ const body2 = await prepareL1Request({ wallet: agentAccount, network: net, compi
 `PolicySchema`, `parsePolicy`, `evaluatePolicy(subject, context)`, `DENIED_ACTION_TYPES`,
 `ALLOWLISTABLE_ACTION_TYPES`, presets `createManualTradingPolicy` / `createGuardianPolicy`, and signed policies:
 `preparePolicySignature`, `buildPolicyTypedData`, `verifyPolicySignature`, `recoverPolicySigner`, `hashPolicy`,
-`canonicalPolicyJson`, `policyTypedDataFields`, `summarizePolicy`.
+`canonicalPolicyJson`, `policyTypedDataFields`, `summarizePolicy`; a policy's builder against the current one:
+`policyBuilderOutdated` (signed for a fee below the current standard fee, or for another builder) and `withCurrentBuilder`.
 
 Signed policies come in two typed-data formats, named by `authorization.typedDataVersion` (the EIP-712 domain version
 of "Kokoah Policy", so the signature binds it). **Format 2** (`POLICY_EIP712_TYPES_V2`, `POLICY_TYPED_DATA_VERSION`)
@@ -493,9 +494,10 @@ type Policy = {
   maxStopLossDistancePct?: number;                   // attached stop within X% of entry (optional)
   priceBandPct: number;                              // orders that execute now vs mark (resting limits: 50%)
   allowedVaultAddresses: `0x${string}`[];            // [] = master account only
-  requiredBuilder: { b: `0x${string}`; f: number } | null;  // f caps every order's fee; below the current
-                                                     // standard fee the policy is outdated (policyBuilderOutdated)
-                                                     // and is signed again with withCurrentBuilder
+  requiredBuilder: { b: `0x${string}`; f: number } | null;  // f caps every order's fee; signed for a fee below
+                                                     // the current standard fee or for another builder, the policy
+                                                     // is outdated (policyBuilderOutdated) and is signed again
+                                                     // with withCurrentBuilder
   maxExpiresAfterWindowMs: number | null;            // non-null ⇒ expiresAfter required and ≤ now + window
   allowedOrigins?: IntentOrigin[];
   exemptReduceOnlyFromNotionalCaps: boolean;         // default true
