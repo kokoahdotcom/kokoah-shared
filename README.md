@@ -294,7 +294,8 @@ Other rules:
   A stop-limit counts as cover only with its limit beyond the trigger.
 - With `isolatedPositionLeverage` (the account's isolated positions, read by the signer), automation may lower the
   leverage of an open isolated position but not raise it (that takes margin out of it, like removing margin) or switch
-  it to cross. Attached stop-losses still waiting for their entry to fill never count as cover.
+  it to cross. Attached stop-losses still waiting for their entry to fill never count as cover, and one listed as an
+  order of its own can be cancelled or changed only together with its entry.
 - `requireStopLossForNewEntries`: an entry needs an attached stop covering its full size on the losing side (and within
   `maxStopLossDistancePct` of the entry, when set), or an existing exchange stop (`context.hasStopLoss`). Modifies of
   non-reduce-only orders need an existing stop, and are blocked by the daily loss lock like new entries.

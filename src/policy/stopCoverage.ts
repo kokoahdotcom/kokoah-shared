@@ -14,9 +14,11 @@
  * A stop-loss attached to an entry (grouping `normalTpsl`) is not cover until Hyperliquid places it: its docs say it
  * places the children of an order only once that order fills completely, and cancels them with it when the user
  * cancels a partly filled one. So a cancel or modify of a partly filled entry with an attached stop-loss is refused
- * unless the position it filled is fully covered by stop-losses already on the book (place one first). Assumptions, to
- * check on testnet: Hyperliquid lists such children only in their parent's `children` (not as open orders of their
- * own), and a modify of the parent drops them as a cancel does.
+ * unless the position it filled is fully covered by stop-losses already on the book (place one first); such a waiting
+ * stop-loss never counts as cover, and should Hyperliquid list it as an order of its own, it can be cancelled or changed
+ * only together with its entry. Assumptions, to check on testnet: Hyperliquid lists such children only in their
+ * parent's `children` (not as open orders of their own), `orderStatus` doesn't know them while they wait (so a cancel
+ * of one alone does nothing), and a modify of the parent drops them as a cancel does.
  *
  * @module
  */
@@ -170,7 +172,8 @@ const within = (pct: number | undefined): string => (pct !== undefined ? ` withi
  * message per position, or names an order that isn't in it; empty when it doesn't. A position fully covered before
  * must stay fully covered, and one partly covered must not lose any of its cover. A partly filled entry with an attached
  * stop-loss may be cancelled or changed only while the position it adds to is fully covered without it (see the module
- * notes). Orders `exempt` accepts (by cloid: a bot's own orders, where the policy lets bots trade without stops) may be
+ * notes), and a stop-loss still waiting for its entry (listed as an order of its own) only together with that entry.
+ * Orders `exempt` accepts (by cloid: a bot's own orders, where the policy lets bots trade without stops) may be
  * cancelled or changed whatever cover they give. Other action types have nothing to check.
  */
 export function stopCoverageProblems(input: {
