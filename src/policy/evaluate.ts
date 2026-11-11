@@ -10,7 +10,8 @@
  *    margin (automation only adds it, at most `maxOrderNotionalUsd` at a time, counted toward the daily notional and
  *    the per-minute rate),
  *    price band vs mark (orders that execute now: `priceBandPct`; resting limits and untriggered triggers: the wider
- *    resting band, see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
+ *    resting band; a trigger's limit within `priceBandPct` of its trigger unless it is reduce-only and away from the
+ *    mark, then max(`priceBandPct`, 10%); see `band.ts`), vault addresses, required builder, `expiresAfter` window, origin, daily loss lock,
  *    `scheduleCancel` at most 1 h ahead, and (with `requireStopCoverage`) no cancel or modify that takes stop-loss
  *    cover away from a position, no entry that leaves the position it adds to partly covered, and no `scheduleCancel`
  *    set at all;
@@ -94,6 +95,18 @@ export interface PolicyContext {
   hasStopLoss?: (coin: string) => boolean;
   /** Current leverage setting per coin, when known. */
   leverageByCoin?: Readonly<Record<string, number>>;
+  /**
+   * The traded account's open isolated positions, by coin, with the leverage each is at now, read by the signer itself.
+   * Raising that leverage takes margin out of the position (closer to liquidation), like removing margin: automation may
+   * not do it. Given for `updateLeverage`; see {@link PolicyContext.requireIsolatedPositions}.
+   */
+  isolatedPositionLeverage?: Readonly<Record<string, number>>;
+  /**
+   * An `updateLeverage` of automation must come with {@link PolicyContext.isolatedPositionLeverage} (an unread account
+   * is refused, never taken for one without isolated positions). For signers that read it themselves (the signer
+   * service); previews leave it unset.
+   */
+  requireIsolatedPositions?: boolean;
   /**
    * With `policy.requireStopLossForNewEntries`, cancels and modifies (the exact wire action) must not take stop-loss
    * cover away from a position, and an order's entries must leave the whole position they add to covered
@@ -238,8 +251,28 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
   switch (actionType) {
     case "updateLeverage": {
       const lev = wire ? (wire.leverage as number) : intent?.kind === "updateLeverage" ? intent.leverage : Number.NaN;
-      checkCoin(wire ? resolveCoin(wire.asset as number, context, add) : intent?.kind === "updateLeverage" ? intent.coin : undefined);
+      const coin = wire ? resolveCoin(wire.asset as number, context, add) : intent?.kind === "updateLeverage" ? intent.coin : undefined;
+      checkCoin(coin);
       if (!(lev <= policy.maxLeverage)) add("LEVERAGE_EXCEEDED", `Leverage ${lev}x is above the policy maximum of ${policy.maxLeverage}x.`);
+      // Raising the leverage of an open isolated position takes margin out of it, which no notional cap covers: like
+      // removing margin, automation (see updateIsolatedMargin below) may lower it, never raise it, nor switch the
+      // position's margin mode. Lowering it only adds margin to the position, as adding margin does.
+      const cross = wire ? wire.isCross !== false : intent?.kind === "updateLeverage" && intent.marginMode !== "isolated";
+      if (isAutomation(policy, origin) && coin !== undefined) {
+        const now = context.isolatedPositionLeverage;
+        if (now === undefined) {
+          if (context.requireIsolatedPositions === true && !cross) {
+            add("ACTION_TYPE_NOT_ALLOWED", `The account's isolated ${coin} position could not be checked, so its leverage is not changed.`);
+          } else if (context.requireIsolatedPositions === true) {
+            add("ACTION_TYPE_NOT_ALLOWED", `The account's ${coin} position could not be checked, so its margin mode is not changed.`);
+          }
+        } else if (Object.hasOwn(now, coin)) {
+          if (cross) add("ACTION_TYPE_NOT_ALLOWED", `Automation may not switch the open isolated ${coin} position to cross margin.`);
+          else if (!(lev <= (now[coin] as number))) {
+            add("ACTION_TYPE_NOT_ALLOWED", `Automation may lower the leverage of the isolated ${coin} position, not raise it (from ${now[coin]}x to ${lev}x): that takes margin out of it.`);
+          }
+        }
+      }
       break;
     }
     case "updateIsolatedMargin":
@@ -251,7 +284,7 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
       // margin of the largest order the key may place, even at 1×), never the account's whole cross collateral at once.
       // `topUpIsolatedOnlyMargin` names a target leverage instead of an amount, so it can't be capped: automation doesn't
       // sign it.
-      const automation = (policy.allowedOrigins !== undefined && !policy.allowedOrigins.includes("manual")) || (origin !== undefined && origin !== "manual");
+      const automation = isAutomation(policy, origin);
       const amountUsd = wire ? Number(wire.ntli) / 1e6 : intent?.kind === "updateIsolatedMargin" ? Number(intent.amountUsd) : Number.NaN;
       if (automation) {
         if (actionType === "topUpIsolatedOnlyMargin") {
@@ -414,10 +447,19 @@ function checkOrderLegs(
       }
     } else if (mark === undefined) {
       // The limit-vs-trigger part needs no mark; check it before reporting the missing mark.
-      const problem = triggerLimitBandProblem({ triggerPrice: leg.triggerPrice as number, limitPrice: leg.price, bandPct: band, label: leg.coin });
+      const problem = triggerLimitBandProblem({
+        triggerPrice: leg.triggerPrice as number,
+        limitPrice: leg.price,
+        bandPct: band,
+        label: leg.coin,
+        reduceOnly: leg.reduceOnly === true,
+        isBuy: leg.isBuy,
+        tpsl: leg.tpsl ?? "sl",
+      });
       if (problem) add("PRICE_OUTSIDE_BAND", problem);
       add("MARK_PRICE_UNAVAILABLE", `No mark price for ${leg.coin}.`);
     } else {
+      // The limit's allowance from its trigger: max(band, 10%) only for a reduce-only trigger away from the mark.
       const check = checkTriggerPriceBand({
         isBuy: leg.isBuy,
         tpsl: leg.tpsl ?? "sl",
@@ -426,6 +468,7 @@ function checkOrderLegs(
         mark,
         bandPct: band,
         label: leg.coin,
+        reduceOnly: leg.reduceOnly === true,
       });
       for (const p of check.problems) add("PRICE_OUTSIDE_BAND", p);
     }
@@ -541,7 +584,7 @@ function checkSpotLegs(legs: OrderLeg[], actionType: string, wire: Wire | undefi
 
 /**
  * An entry is protected when an attached stop-loss leg (reduce-only, opposite side, same coin) covers its full size,
- * can fill when it fires (a market trigger, or a limit at or beyond its trigger), sits on the losing side of the entry
+ * can fill when it fires (a market trigger, or a limit beyond its trigger), sits on the losing side of the entry
  * and, when the policy sets `maxStopLossDistancePct`, is close enough to it.
  */
 function attachedStopProblem(entry: OrderLeg, legs: OrderLeg[], rawMark: number | undefined, maxDistancePct: number | undefined): string | null {
@@ -562,7 +605,7 @@ function attachedStopProblem(entry: OrderLeg, legs: OrderLeg[], rawMark: number 
     return null;
   }
   if (unfillable) {
-    return `The ${entry.coin} stop-loss's limit price must be at or beyond its trigger (at or below it for a sell, at or above it for a buy), or it may never fill.`;
+    return `The ${entry.coin} stop-loss's limit price must be beyond its trigger (below it for a sell, above it for a buy), or it may never fill.`;
   }
   return maxDistancePct !== undefined
     ? `The ${entry.coin} stop-loss must cover the whole entry, sit on the losing side and be within ${maxDistancePct}% of the entry.`
@@ -588,6 +631,14 @@ function placedCloids(intent: ActionIntent | undefined, wire: Wire | undefined):
     out.push(intent.order.cloid);
   }
   return out.filter((c): c is string => typeof c === "string");
+}
+
+/**
+ * Whether automation signs this: a key without manual trading (such as the servers' automation keys), or any origin
+ * other than the user's own hand.
+ */
+function isAutomation(policy: Policy, origin: IntentOrigin | undefined): boolean {
+  return (policy.allowedOrigins !== undefined && !policy.allowedOrigins.includes("manual")) || (origin !== undefined && origin !== "manual");
 }
 
 /** True for a cloid whose Kokoah tag names the bot origin: a bot's own order. */
@@ -648,7 +699,8 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
       coin: intent.coin,
       isBuy: intent.side === "buy",
       size: Number(intent.size),
-      // Market-type triggers: the compiler uses trigger ± 10%; the trigger stands in for the limit price here.
+      // Market-type triggers: the compiler puts the limit at trigger ± the slippage it is given (10% by default); the
+      // trigger stands in for the limit price here, and the compiled wire action is checked with its real limit.
       price: intent.price !== undefined ? Number(intent.price) : isTrigger && intent.triggerPrice !== undefined ? Number(intent.triggerPrice) : undefined,
       triggerPrice: intent.triggerPrice !== undefined ? Number(intent.triggerPrice) : undefined,
       isTrigger,

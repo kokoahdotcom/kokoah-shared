@@ -2,7 +2,18 @@ import { describe, expect, it } from "vitest";
 import { compileAction } from "../src/actions/index.js";
 import { type ActionIntentInput, parseActionIntent } from "../src/intents/index.js";
 import { generateCloid } from "../src/actions/cloid.js";
-import { type AccountBook, type AccountOrder, coveredSize, createGuardianPolicy, evaluatePolicy, type Policy, type PolicyContext, positionCovered, stopCanFill } from "../src/policy/index.js";
+import {
+  type AccountBook,
+  type AccountOrder,
+  coveredSize,
+  createGuardianPolicy,
+  evaluatePolicy,
+  marketTriggerSlippageFor,
+  type Policy,
+  type PolicyContext,
+  positionCovered,
+  stopCanFill,
+} from "../src/policy/index.js";
 import { mainnetRegistry } from "./helpers.js";
 
 const registry = mainnetRegistry();
@@ -12,13 +23,13 @@ const CLOID = "0x6b6f0101000000000000000000000abc";
 const BUILDER = { address: "0x1111111111111111111111111111111111111111" as const, feeTenthsBps: 25 };
 
 /** Long 0.5 BTC from $100,000 with a reduce-only stop at $95,000 (oid 11), a take-profit (oid 13) and an ETH limit (oid 20). */
-const stop: AccountOrder = { coin: "BTC", oid: 11, cloid: CLOID, isBuy: false, size: 0.5, isTrigger: true, triggerPrice: 95_000, tpsl: "sl", reduceOnly: true, positionTpsl: false, isMarket: true, limitPrice: 85_500 };
+const stop: AccountOrder = { coin: "BTC", oid: 11, cloid: CLOID, isBuy: false, size: 0.5, isTrigger: true, triggerPrice: 95_000, tpsl: "sl", reduceOnly: true, positionTpsl: false, isMarket: true, limitPrice: 85_500, filledSize: 0, attachedStops: [] };
 const book = (over: Partial<AccountBook> = {}): AccountBook => ({
   positions: [{ coin: "BTC", size: 0.5, entryPrice: 100_000 }],
   orders: [
     stop,
-    { coin: "BTC", oid: 13, isBuy: false, size: 0.5, isTrigger: true, triggerPrice: 110_000, tpsl: "tp", reduceOnly: true, positionTpsl: false, isMarket: true, limitPrice: 99_000 },
-    { coin: "ETH", oid: 20, isBuy: true, size: 1, isTrigger: false, reduceOnly: false, positionTpsl: false, isMarket: false, limitPrice: 2_900 },
+    { coin: "BTC", oid: 13, isBuy: false, size: 0.5, isTrigger: true, triggerPrice: 110_000, tpsl: "tp", reduceOnly: true, positionTpsl: false, isMarket: true, limitPrice: 99_000, filledSize: 0, attachedStops: [] },
+    { coin: "ETH", oid: 20, isBuy: true, size: 1, isTrigger: false, reduceOnly: false, positionTpsl: false, isMarket: false, limitPrice: 2_900, filledSize: 0, attachedStops: [] },
   ],
   ...over,
 });
@@ -37,8 +48,15 @@ const ctx = (over: Partial<PolicyContext> = {}): PolicyContext => ({
 });
 
 const check = (intent: ActionIntentInput, c: Partial<PolicyContext> = {}) => {
-  const compiled = compileAction(parseActionIntent(intent), { registry, now: NOW, builder: BUILDER, getMidPrice: () => "100000" });
-  return evaluatePolicy({ kind: "compiled", compiled, expiresAfter: NOW + 15_000 }, ctx(c));
+  const context = ctx(c);
+  const compiled = compileAction(parseActionIntent(intent), {
+    registry,
+    now: NOW,
+    builder: BUILDER,
+    getMidPrice: () => "100000",
+    marketTriggerSlippageBps: marketTriggerSlippageFor(context.policy, context.markPrices),
+  });
+  return evaluatePolicy({ kind: "compiled", compiled, expiresAfter: NOW + 15_000 }, context);
 };
 const codes = (d: ReturnType<typeof evaluatePolicy>) => d.violations.map((v) => v.code);
 const cancel = (oid: number, coin = "BTC", origin = "guardian"): ActionIntentInput => ({ kind: "cancel", cancels: [{ coin, oid }], origin }) as ActionIntentInput;
@@ -60,7 +78,7 @@ describe("stop coverage (stops required)", () => {
     expect(check(cancel(20, "ETH")).allowed).toBe(true);
     // An order the signer looked up and found closed on Hyperliquid (filled, canceled) takes nothing away.
     expect(check(cancel(999), { accountBook: book({ notStops: [999] }) }).allowed).toBe(true);
-    const positionStop: AccountOrder = { coin: "BTC", oid: 12, isBuy: false, size: 0, isTrigger: true, triggerPrice: 97_000, tpsl: "sl", reduceOnly: true, positionTpsl: true, isMarket: true, limitPrice: 87_300 };
+    const positionStop: AccountOrder = { coin: "BTC", oid: 12, isBuy: false, size: 0, isTrigger: true, triggerPrice: 97_000, tpsl: "sl", reduceOnly: true, positionTpsl: true, isMarket: true, limitPrice: 87_300, filledSize: 0, attachedStops: [] };
     expect(check(cancel(11), { accountBook: book({ orders: [...book().orders, positionStop] }) }).allowed).toBe(true);
     expect(check(cancel(11), { accountBook: book({ positions: [] }) }).allowed).toBe(true);
     // Two stops of half the size each cover it together; one alone doesn't.
@@ -222,7 +240,7 @@ describe("stop coverage of the whole position on entries (stops required)", () =
   it("refuses an attached stop-limit that can't fill, and needs the account's book", () => {
     const d = check(entry({ stopLoss: { triggerPrice: "95000", orderType: "limit", limitPrice: "96000" } }), { accountBook: book({ positions: [], orders: [] }) });
     expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
-    expect(d.violations[0]!.message).toContain("limit price must be at or beyond its trigger");
+    expect(d.violations[0]!.message).toContain("limit price must be beyond its trigger");
     expect(check(entry({ stopLoss: { triggerPrice: "95000", orderType: "limit", limitPrice: "94000" } }), { accountBook: book({ positions: [], orders: [] }) }).allowed).toBe(true);
     const missing = check(entry(), { accountBook: undefined });
     expect(codes(missing)).toEqual(["STOP_LOSS_REQUIRED"]);
@@ -246,7 +264,7 @@ describe("stop coverage of the whole position on entries (stops required)", () =
       type: "order",
       orders: [
         order({ b: true, p: "100000", s: "0.01", t: { limit: { tif: "Gtc" } } }),
-        order({ b: false, p: "85500", s: "0.01", r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } }),
+        order({ b: false, p: "90250", s: "0.01", r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } }),
         order({ b: false, p: "105000", s: "0.5", t: { limit: { tif: "Gtc" } } }),
         order({ b: true, p: "121000", s: "0.5", r: true, t: { trigger: { isMarket: true, triggerPx: "110000", tpsl: "sl" } } }),
       ],
@@ -273,7 +291,7 @@ describe("stop coverage of the whole position on entries (stops required)", () =
   it("allows a batchModify that moves cover between the stops of a partly covered position, not one that lowers it", () => {
     // Long 1 BTC with stops of 0.5 (oid 11) and 0.3 (oid 14): 0.8 covered.
     const partly = book({ positions: [{ coin: "BTC", size: 1, entryPrice: 100_000 }], orders: [stop, { ...stop, oid: 14, cloid: undefined, size: 0.3 }] });
-    const stopWire = (s: string) => ({ a: 0, b: false, p: "85500", s, r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } });
+    const stopWire = (s: string) => ({ a: 0, b: false, p: "90250", s, r: true, t: { trigger: { isMarket: true, triggerPx: "95000", tpsl: "sl" } } });
     const batch = (a: string, b: string) => ({ type: "batchModify", modifies: [{ oid: 11, order: stopWire(a) }, { oid: 14, order: stopWire(b) }] });
     const run = (a: string, b: string) => evaluatePolicy({ kind: "wire", action: batch(a, b), expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ accountBook: partly }));
     expect(run("0.3", "0.5").allowed).toBe(true);
@@ -310,7 +328,7 @@ describe("stop coverage of the whole position on entries (stops required)", () =
       type: "order",
       orders: [
         { a: 0, b: true, p: "100000", s: "0.01", r: false, t: { limit: { tif: "Gtc" } } },
-        stopWire("0.01", "96000", "86400"),
+        stopWire("0.01", "96000", "91200"),
         { a: 0, b: true, p: "85000", s: "1", r: false, t: { limit: { tif: "Gtc" } } },
         stopWire("1", "81000", "72900"),
         stopWire("2", "88500", "79650"),
@@ -323,7 +341,122 @@ describe("stop coverage of the whole position on entries (stops required)", () =
     expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
     expect(d.violations[0]!.message).toContain("the BTC position of 2.01 needs stop-losses within 5% of its entry");
     // Stops within 5% of the highest price any fill could give (100,000) cover it.
-    const near = { ...wire, orders: [wire.orders[0], wire.orders[1], wire.orders[2], stopWire("1", "81000", "72900"), stopWire("2", "95500", "85950")] };
+    const near = { ...wire, orders: [wire.orders[0], wire.orders[1], wire.orders[2], stopWire("1", "81000", "72900"), stopWire("2", "95500", "90725")] };
     expect(evaluatePolicy({ kind: "wire", action: near, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ policy: tight, accountBook: uncovered })).allowed).toBe(true);
+  });
+});
+
+describe("partly filled entries with an attached stop-loss (stops required)", () => {
+  // Long 0.2 BTC from 100,000: a buy limit of 0.5 (oid 30) filled 0.2 of itself; its attached stop-loss (oid 31) waits
+  // inside it until it fills completely.
+  const parent: AccountOrder = { coin: "BTC", oid: 30, isBuy: true, size: 0.3, isTrigger: false, reduceOnly: false, positionTpsl: false, isMarket: false, limitPrice: 100_000, filledSize: 0.2, attachedStops: [31] };
+  const partly = (over: Partial<AccountBook> = {}) => book({ positions: [{ coin: "BTC", size: 0.2, entryPrice: 100_000 }], orders: [parent], ...over });
+  const modifyParent = { kind: "modify", target: { oid: 30 }, order: { coin: "BTC", side: "buy", orderType: "limit", size: "0.3", price: "99000" }, origin: "guardian" } as ActionIntentInput;
+
+  it("refuses cancelling or changing it while nothing else covers the position, which would also cancel its stop", () => {
+    const d = check(cancel(30), { accountBook: partly() });
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(d.violations[0]!.message).toContain("would also cancel the stop-loss attached to it");
+    expect(codes(check(modifyParent, { accountBook: partly(), hasStopLoss: () => true }))).toEqual(["STOP_LOSS_REQUIRED"]);
+  });
+
+  it("allows it once a stop on the book covers the position (place one first)", () => {
+    const own: AccountOrder = { ...stop, oid: 40, cloid: undefined, size: 0.2 };
+    expect(check(cancel(30), { accountBook: partly({ orders: [parent, own] }) }).allowed).toBe(true);
+    // Too small a stop isn't enough.
+    expect(codes(check(cancel(30), { accountBook: partly({ orders: [parent, { ...own, size: 0.1 }] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    // The attached stop never counts, even should Hyperliquid list it as an order of its own.
+    const child: AccountOrder = { ...stop, oid: 31, cloid: undefined, size: 0.5 };
+    expect(codes(check(cancel(30), { accountBook: partly({ orders: [parent, child] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+  });
+
+  it("leaves entries alone that haven't filled, have no attached stop, or add to the other side", () => {
+    expect(check(cancel(30), { accountBook: partly({ orders: [{ ...parent, filledSize: 0 }] }) }).allowed).toBe(true);
+    expect(check(cancel(30), { accountBook: partly({ orders: [{ ...parent, attachedStops: [] }] }) }).allowed).toBe(true);
+    // A short of 0.2 (the buy's fill reduced a larger short): the buy's stop was for a long.
+    expect(check(cancel(30), { accountBook: partly({ positions: [{ coin: "BTC", size: -0.2, entryPrice: 100_000 }] }) }).allowed).toBe(true);
+    // Reduce-only orders don't open anything.
+    expect(check(cancel(30), { accountBook: partly({ orders: [{ ...parent, reduceOnly: true }] }) }).allowed).toBe(true);
+  });
+
+  it("lets an exempt bot cancel its own partly filled entry", () => {
+    const bots: Policy = { ...policy, allowedOrigins: ["guardian", "bot"], botEntriesWithoutStopLoss: true };
+    const own = { ...parent, cloid: generateCloid("bot") };
+    expect(check(cancel(30, "BTC", "bot"), { policy: bots, accountBook: partly({ orders: [own] }) }).allowed).toBe(true);
+    expect(codes(check(cancel(30, "BTC", "bot"), { policy: bots, accountBook: partly() }))).toEqual(["STOP_LOSS_REQUIRED"]);
+  });
+
+  it("checks nothing where the policy doesn't require stops", () => {
+    expect(check(cancel(30), { policy: { ...policy, requireStopLossForNewEntries: false }, accountBook: partly() }).allowed).toBe(true);
+  });
+
+  it("refuses it by cloid and in a batchModify, and for a short's partly filled sell", () => {
+    const named = { ...parent, cloid: CLOID.replace("abc", "def") };
+    expect(codes(check({ kind: "cancel", cancels: [{ coin: "BTC", cloid: named.cloid }], origin: "guardian" } as ActionIntentInput, { accountBook: partly({ orders: [named] }) }))).toEqual([
+      "STOP_LOSS_REQUIRED",
+    ]);
+    const wireOrder = { a: 0, b: true, p: "99000", s: "0.3", r: false, t: { limit: { tif: "Gtc" } } };
+    const batch = { type: "batchModify", modifies: [{ oid: 30, order: wireOrder }] };
+    const d = evaluatePolicy({ kind: "wire", action: batch, expiresAfter: NOW + 15_000, origin: "guardian" }, ctx({ accountBook: partly(), hasStopLoss: () => true }));
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    const sell: AccountOrder = { ...parent, isBuy: false, limitPrice: 101_000 };
+    const short = partly({ positions: [{ coin: "BTC", size: -0.2, entryPrice: 100_000 }], orders: [sell] });
+    expect(codes(check(cancel(30), { accountBook: short }))).toEqual(["STOP_LOSS_REQUIRED"]);
+  });
+
+  it("never counts a waiting attached stop as cover, also when Hyperliquid lists it as an order", () => {
+    // The parent's child (oid 31) listed as an order of its own, and the position's only real stop (oid 40).
+    const child: AccountOrder = { ...stop, oid: 31, cloid: undefined, size: 0.5 };
+    const own: AccountOrder = { ...stop, oid: 40, cloid: undefined, size: 0.2 };
+    const listed = partly({ orders: [parent, child, own] });
+    expect(codes(check(cancel(40), { accountBook: listed }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    // Nor does it cover an entry that adds to the position.
+    const add = { kind: "order", coin: "BTC", side: "buy", orderType: "limit", size: "0.1", price: "100000", stopLoss: { triggerPrice: "96000" }, origin: "guardian" } as ActionIntentInput;
+    expect(codes(check(add, { accountBook: partly({ orders: [parent, child] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(check(add, { accountBook: partly({ orders: [parent, child, own] }) }).allowed).toBe(true);
+  });
+
+  it("refuses cancelling or changing a waiting attached stop on its own, should Hyperliquid list it as an order", () => {
+    const child: AccountOrder = { ...stop, oid: 31, cloid: undefined, size: 0.5 };
+    const own: AccountOrder = { ...stop, oid: 40, cloid: undefined, size: 0.2 };
+    const d = check(cancel(31), { accountBook: partly({ orders: [parent, child, own] }) });
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(d.violations[0]!.message).toBe("Order 31 is the stop-loss attached to the BTC order 30, which Hyperliquid places once that order fills; cancel or change that order together with it instead.");
+    // Also for an entry that hasn't filled yet, and for a modify that moves it.
+    expect(codes(check(cancel(31), { accountBook: partly({ positions: [], orders: [{ ...parent, filledSize: 0 }, child] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    const moveChild = { kind: "modify", target: { oid: 31 }, order: { coin: "BTC", side: "sell", orderType: "stopMarket", size: "0.5", triggerPrice: "70000", reduceOnly: true }, origin: "guardian" } as ActionIntentInput;
+    expect(codes(check(moveChild, { accountBook: partly({ orders: [parent, child, own] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    // Together with its entry: what the partly filled entry needs decides (a stop of its own covers the position here).
+    const both = { kind: "cancel", cancels: [{ coin: "BTC", oid: 30 }, { coin: "BTC", oid: 31 }], origin: "guardian" } as ActionIntentInput;
+    expect(check(both, { accountBook: partly({ orders: [parent, child, own] }) }).allowed).toBe(true);
+    expect(codes(check(both, { accountBook: partly({ orders: [parent, child] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    // An exempt bot's own entry: its own stop.
+    const bots: Policy = { ...policy, allowedOrigins: ["guardian", "bot"], botEntriesWithoutStopLoss: true };
+    const botChild = { ...child, cloid: generateCloid("bot") };
+    expect(check(cancel(31, "BTC", "bot"), { policy: bots, accountBook: partly({ orders: [parent, botChild] }) }).allowed).toBe(true);
+  });
+
+  it("survives malformed attached stops from an older caller", () => {
+    const odd = { ...parent, attachedStops: undefined as unknown as number[] };
+    expect(check(cancel(30), { accountBook: partly({ orders: [odd] }) }).allowed).toBe(true);
+    const notArray = { ...parent, attachedStops: 31 as unknown as number[] };
+    expect(check(cancel(30), { accountBook: partly({ orders: [notArray] }) }).allowed).toBe(true);
+  });
+});
+
+describe("stop-limits whose limit is at the trigger", () => {
+  it("don't count as cover: they fill only if the market is still there once it fired", () => {
+    expect(stopCanFill({ isBuy: false, triggerPrice: 95_000, isMarket: false, limitPrice: 95_000 })).toBe(false);
+    expect(stopCanFill({ isBuy: true, triggerPrice: 105_000, isMarket: false, limitPrice: 105_000 })).toBe(false);
+    expect(stopCanFill({ isBuy: false, triggerPrice: 95_000, isMarket: false, limitPrice: 94_999 })).toBe(true);
+    const atTrigger: AccountOrder = { ...stop, isMarket: false, limitPrice: 95_000 };
+    expect(coveredSize({ coin: "BTC", size: 0.5, entryPrice: 100_000 }, [atTrigger], 25)).toBe(0);
+    // The only real stop can't be cancelled on the strength of one at its trigger.
+    expect(codes(check(cancel(11), { accountBook: book({ orders: [stop, { ...atTrigger, oid: 12, cloid: undefined }] }) }))).toEqual(["STOP_LOSS_REQUIRED"]);
+    // An entry's own stop-limit at its trigger doesn't protect it.
+    const entry = { kind: "order", coin: "BTC", side: "buy", orderType: "limit", size: "0.5", price: "100000", stopLoss: { triggerPrice: "95000", orderType: "limit", limitPrice: "95000" }, origin: "guardian" } as ActionIntentInput;
+    const d = check(entry, { accountBook: book({ positions: [], orders: [] }) });
+    expect(codes(d)).toEqual(["STOP_LOSS_REQUIRED"]);
+    expect(d.violations[0]!.message).toContain("limit price must be beyond its trigger");
   });
 });

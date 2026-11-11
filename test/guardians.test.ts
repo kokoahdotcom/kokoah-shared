@@ -14,7 +14,7 @@ import {
   parseGuardianRule,
   type PositionState,
 } from "../src/guardians/index.js";
-import { createGuardianPolicy, evaluatePolicy } from "../src/policy/index.js";
+import { createGuardianPolicy, evaluatePolicy, marketTriggerSlippageFor } from "../src/policy/index.js";
 import { mainnetRegistry, prng } from "./helpers.js";
 
 const NOW = 1_790_000_000_000;
@@ -636,6 +636,7 @@ describe("integration: guardian intents compile and pass the guardian policy", (
           registry,
           builder: { address: "0x1111111111111111111111111111111111111111", feeTenthsBps: 25 },
           getMidPrice: (coin) => mk[coin]?.markPrice,
+          marketTriggerSlippageBps: marketTriggerSlippageFor(policy, { BTC: 101_234.5, SOL: 151.2345 }),
         });
         const decision = evaluatePolicy({ kind: "compiled", compiled, expiresAfter: NOW + 10_000 }, { policy, now: NOW, markPrices: { BTC: 101_234.5, SOL: 151.2345 }, dailyNotionalUsedUsd: 0, ordersInLastMinute: 0, registry });
         expect(decision.violations).toEqual([]);

@@ -1,0 +1,31 @@
+# From kokoah-infra/ci/CODEOWNERS. Owners: the account that owns the repositories (replace with teams if an
+# organization team is created). GitHub requests a code owner's review on each pull request; nothing enforces it yet,
+# since main has no ruleset for now.
+#
+# The last matching pattern wins, so the general rule comes first.
+
+# Everything: at least one maintainer.
+*                                   @zenith10007
+
+# Supply chain.
+/package.json                       @zenith10007
+/pnpm-lock.yaml                     @zenith10007
+/pnpm-workspace.yaml                @zenith10007
+/.npmrc                             @zenith10007
+/.nvmrc                             @zenith10007
+
+# CI and repository settings.
+/.github/                           @zenith10007
+
+# What the signer frame and the signer service sign: the signing policy, the action compiler, the intents, signing,
+# the market registry, prices and precision, the network guard, sub-account and vault rules.
+/src/policy/                        @zenith10007
+/src/actions/                       @zenith10007
+/src/intents/                       @zenith10007
+/src/signing/                       @zenith10007
+/src/markets/                       @zenith10007
+/src/precision/                     @zenith10007
+/src/network/                       @zenith10007
+/src/subaccounts/                   @zenith10007
+/src/vaults/                        @zenith10007
+/src/risk/                          @zenith10007

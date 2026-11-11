@@ -15,6 +15,7 @@ import {
   DENIED_ACTION_TYPES,
   evaluatePolicy,
   hashPolicy,
+  marketTriggerSlippageFor,
   parsePolicy,
   type Policy,
   policyBuilderOutdated,
@@ -256,6 +257,35 @@ describe("order limits", () => {
     expect(evalIntent(margin("-50", "manual")).allowed).toBe(true);
   });
 
+  it("lets automation lower the leverage of an isolated position but never raise it (that takes margin out)", () => {
+    const lev = (leverage: number, origin: string, marginMode = "isolated") => ({ kind: "updateLeverage", coin: "BTC", leverage, marginMode, origin }) as ActionIntentInput;
+    const open = { isolatedPositionLeverage: { BTC: 5 } };
+    const raised = evalIntent(lev(8, "guardian"), open);
+    expect(codes(raised)).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(raised.violations[0]!.message).toBe("Automation may lower the leverage of the isolated BTC position, not raise it (from 5x to 8x): that takes margin out of it.");
+    expect(evalIntent(lev(3, "guardian"), open).allowed).toBe(true);
+    expect(evalIntent(lev(5, "telegram"), open).allowed).toBe(true);
+    // The compiled wire action is what the signer checks.
+    const compiled = compileAction(parseActionIntent(lev(8, "guardian")), { registry });
+    expect(codes(evaluatePolicy({ kind: "compiled", compiled }, ctx(open)))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(codes(evaluatePolicy({ kind: "wire", action: compiled.action as never, expiresAfter: NOW + 1000, origin: "bot" }, ctx(open)))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    // No isolated position there, cross margin, or the user's own hand: unchanged.
+    expect(evalIntent(lev(8, "guardian"), { isolatedPositionLeverage: {} }).allowed).toBe(true);
+    // Nor may it switch the open isolated position to cross margin; cross elsewhere is unchanged.
+    expect(codes(evalIntent(lev(3, "guardian", "cross"), open))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(codes(evaluatePolicy({ kind: "wire", action: { type: "updateLeverage", asset: 0, isCross: true, leverage: 3 }, expiresAfter: NOW + 1000, origin: "bot" }, ctx(open)))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(evalIntent(lev(8, "guardian", "cross"), { isolatedPositionLeverage: { ETH: 5 } }).allowed).toBe(true);
+    expect(evalIntent(lev(8, "manual"), open).allowed).toBe(true);
+    // A key without manual trading is automation whatever the origin says.
+    expect(codes(evalIntent(lev(8, "manual"), { ...open, policy: { ...policy, allowedOrigins: ["guardian", "manual"] } }))).toEqual([]);
+    expect(codes(evaluatePolicy(parseActionIntent(lev(8, "guardian")), ctx({ ...open, policy: { ...policy, allowedOrigins: ["guardian"] } })))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    // A signer that must read the account refuses when it couldn't; previews don't check.
+    expect(codes(evalIntent(lev(3, "guardian"), { requireIsolatedPositions: true }))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(evalIntent(lev(8, "guardian")).allowed).toBe(true);
+    expect(codes(evalIntent(lev(8, "guardian", "cross"), { requireIsolatedPositions: true }))).toEqual(["ACTION_TYPE_NOT_ALLOWED"]);
+    expect(evalIntent(lev(8, "guardian", "cross"), { requireIsolatedPositions: true, isolatedPositionLeverage: {} }).allowed).toBe(true);
+  });
+
   it("caps the isolated margin an automation key adds at once at the order limit", () => {
     const margin = (amountUsd: string, origin: string) => ({ kind: "updateIsolatedMargin", coin: "BTC", amountUsd, origin }) as ActionIntentInput;
     const server = { policy: { ...policy, allowedOrigins: ["guardian", "telegram"] as Policy["allowedOrigins"] } };
@@ -332,21 +362,23 @@ describe("order limits", () => {
 
 describe("compiled and wire actions", () => {
   const builder = { address: BUILDER.b, feeTenthsBps: BUILDER.f };
+  // As the signers compile: market triggers within the slippage the policy allows them.
+  const slip = { marketTriggerSlippageBps: marketTriggerSlippageFor(policy, ctx().markPrices) };
 
   it("checks the builder on the exact wire action", () => {
-    const ok = compileAction(entry(), { registry, builder });
+    const ok = compileAction(entry(), { registry, builder, ...slip });
     expect(evaluatePolicy({ kind: "compiled", compiled: ok }, ctx()).allowed).toBe(true);
-    const none = compileAction(entry(), { registry });
+    const none = compileAction(entry(), { registry, ...slip });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: none }, ctx()))).toEqual(["BUILDER_REQUIRED"]);
-    const wrong = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: 100 } });
+    const wrong = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: 100 }, ...slip });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: wrong }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
-    const other = compileAction(entry(), { registry, builder: { ...builder, address: "0x2222222222222222222222222222222222222222" } });
+    const other = compileAction(entry(), { registry, builder: { ...builder, address: "0x2222222222222222222222222222222222222222" }, ...slip });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: other }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
   });
 
   it("refuses an order at a raised standard fee under a policy signed before, until it is signed again", () => {
     const raised = { ...builder, feeTenthsBps: BUILDER.f + 20 };
-    const c = compileAction(entry(), { registry, builder: raised });
+    const c = compileAction(entry(), { registry, builder: raised, ...slip });
     expect(policyBuilderOutdated(policy, raised)).toBe(true);
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
     const again = withCurrentBuilder(policy, raised);
@@ -356,20 +388,20 @@ describe("compiled and wire actions", () => {
 
   it("accepts a lower builder fee (a promotion) but never a higher one", () => {
     for (const f of [0, 10, BUILDER.f]) {
-      const c = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: f } });
+      const c = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: f }, ...slip });
       expect(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()).allowed).toBe(true);
     }
-    const above = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: BUILDER.f + 1 } });
+    const above = compileAction(entry(), { registry, builder: { ...builder, feeTenthsBps: BUILDER.f + 1 }, ...slip });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: above }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
   });
 
   it("evaluates compiled market orders at their IOC price", () => {
-    const c = compileAction(entry({ orderType: "market", price: undefined, slippageBps: 100 }), { registry, builder, getMidPrice: () => 100_000 });
+    const c = compileAction(entry({ orderType: "market", price: undefined, slippageBps: 100 }), { registry, builder, getMidPrice: () => 100_000, ...slip });
     expect(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()).allowed).toBe(true);
   });
 
   it("evaluates raw wire actions via the registry", () => {
-    const c = compileAction(entry({ coin: "xyz:SP500", size: "1", price: "6800", stopLoss: { triggerPrice: "6600" } }), { registry, builder });
+    const c = compileAction(entry({ coin: "xyz:SP500", size: "1", price: "6800", stopLoss: { triggerPrice: "6600" } }), { registry, builder, ...slip });
     const wire = { kind: "wire" as const, action: c.action as unknown as { type: string }, expiresAfter: NOW + 10_000, origin: "manual" as const };
     expect(evaluatePolicy(wire, ctx()).allowed).toBe(true);
     expect(codes(evaluatePolicy(wire, ctx({ registry: undefined })))).toContain("UNKNOWN_MARKET");
@@ -380,7 +412,7 @@ describe("compiled and wire actions", () => {
   });
 
   it("does not require a builder on cancels or leverage changes", () => {
-    const c = compileAction({ kind: "cancel", cancels: [{ coin: "BTC", oid: 1 }], origin: "manual" }, { registry });
+    const c = compileAction({ kind: "cancel", cancels: [{ coin: "BTC", oid: 1 }], origin: "manual" }, { registry, ...slip });
     expect(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()).allowed).toBe(true);
   });
 });

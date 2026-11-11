@@ -5,11 +5,18 @@
  * from the caller), and {@link stopCoverageProblems} and {@link positionAfterEntriesProblem} replay the action on them.
  *
  * A stop-loss counts toward a position's cover when it is a trigger with `tpsl` "sl" on the closing side, reduce-only
- * or a position TP/SL, that can fill when it fires ({@link stopCanFill}: a market trigger, or a limit at or beyond its
+ * or a position TP/SL, that can fill when it fires ({@link stopCanFill}: a market trigger, or a limit beyond its
  * trigger), each within `maxStopLossDistancePct` of the entry price on the losing side when the policy sets it (a stop
  * at or past the entry, locking in profit, always counts). The cover is the size those stops close, at most the
  * position's. Only positions an action touches are compared, and only cover it takes away is refused: a position
  * without a stop before stays allowed to cancel and change its other orders.
+ *
+ * A stop-loss attached to an entry (grouping `normalTpsl`) is not cover until Hyperliquid places it: its docs say it
+ * places the children of an order only once that order fills completely, and cancels them with it when the user
+ * cancels a partly filled one. So a cancel or modify of a partly filled entry with an attached stop-loss is refused
+ * unless the position it filled is fully covered by stop-losses already on the book (place one first). Assumptions, to
+ * check on testnet: Hyperliquid lists such children only in their parent's `children` (not as open orders of their
+ * own), and a modify of the parent drops them as a cancel does.
  *
  * @module
  */
@@ -37,6 +44,13 @@ export interface AccountOrder {
   isMarket: boolean;
   /** Limit price (Hyperliquid `limitPx`, wire `p`): what a limit trigger executes at once it fires. */
   limitPrice: number | undefined;
+  /** How much of the order has filled already (Hyperliquid `origSz − sz`; 0 for an order that hasn't). */
+  filledSize: number;
+  /**
+   * The oids of the stop-losses attached to this order (grouping `normalTpsl`, Hyperliquid `children` with `tpsl`
+   * "sl"), which Hyperliquid places only once it fills completely. Empty for an order without them.
+   */
+  attachedStops: readonly number[];
 }
 
 /** An open position of the account (Hyperliquid `clearinghouseState`). */
@@ -52,9 +66,10 @@ export interface AccountBook {
   positions: readonly AccountPosition[];
   orders: readonly AccountOrder[];
   /**
-   * Orders the action names that the signer looked up on Hyperliquid on their own and found can't be a stop-loss of any
-   * position (closed: filled, canceled or never placed; or open but not a perp stop-loss), by oid or lowercase cloid:
-   * naming one takes nothing away. Every other order a cancel or modify names must be in `orders`.
+   * Orders the action names that the signer looked up on Hyperliquid on their own and found can't take stop-loss cover
+   * away (closed: filled, canceled or never placed; or open but neither a perp stop-loss nor a partly filled entry with
+   * an attached stop-loss), by oid or lowercase cloid: naming one takes nothing away. Every other order a cancel or
+   * modify names must be in `orders`.
    */
   notStops?: ReadonlyArray<number | string>;
 }
@@ -86,16 +101,32 @@ function target(orders: readonly AccountOrder[], ref: unknown): number[] {
 }
 
 /**
- * True when a stop order can fill once it fires: a market trigger, or a limit at or beyond its trigger on the closing
- * side (a sell at or below it, a buy at or above it). A sell stop at 90 with a limit of 99 rests unfilled above a
- * falling market, so it protects nothing.
+ * True when a stop order can fill once it fires: a market trigger, or a limit beyond its trigger on the closing side (a
+ * sell below it, a buy above it). A sell stop at 90 with a limit of 99 rests unfilled above a falling market, so it
+ * protects nothing; one with its limit at the trigger itself fills only if the market is still there, which a falling
+ * market that just crossed it usually isn't.
  */
 export function stopCanFill(o: { isBuy: boolean; triggerPrice?: number | undefined; isMarket?: boolean | undefined; limitPrice?: number | undefined }): boolean {
   if (o.isMarket === true) return true;
   const t = o.triggerPrice;
   const l = o.limitPrice;
   if (t === undefined || l === undefined || !(t > 0) || !(l > 0)) return false;
-  return o.isBuy ? l >= t : l <= t;
+  return o.isBuy ? l > t : l < t;
+}
+
+/**
+ * The oids of the stop-losses attached to the book's entries that haven't filled completely. They aren't placed, so they
+ * cover nothing yet, also should Hyperliquid list them as orders of their own.
+ */
+function waitingStops(orders: readonly AccountOrder[]): ReadonlySet<number> {
+  const waiting = new Set<number>();
+  for (const o of orders) if (Array.isArray(o.attachedStops)) for (const oid of o.attachedStops) waiting.add(oid);
+  return waiting;
+}
+
+/** `orders` without those in `waiting` (see {@link waitingStops}). */
+function placedOnly(orders: readonly AccountOrder[], waiting: ReadonlySet<number>): AccountOrder[] {
+  return waiting.size === 0 ? [...orders] : orders.filter((o) => !waiting.has(o.oid));
 }
 
 /** True when `o` is a stop-loss that counts toward the cover of `p` (see the module notes). */
@@ -137,9 +168,10 @@ const within = (pct: number | undefined): string => (pct !== undefined ? ` withi
 /**
  * Why a cancel or modify (the exact wire action) would take stop-loss cover away from a position of `book`, one
  * message per position, or names an order that isn't in it; empty when it doesn't. A position fully covered before
- * must stay fully covered, and one partly covered must not lose any of its cover. Orders `exempt` accepts (by cloid:
- * a bot's own orders, where the policy lets bots trade without stops) may be cancelled or changed whatever cover they
- * give. Other action types have nothing to check.
+ * must stay fully covered, and one partly covered must not lose any of its cover. A partly filled entry with an attached
+ * stop-loss may be cancelled or changed only while the position it adds to is fully covered without it (see the module
+ * notes). Orders `exempt` accepts (by cloid: a bot's own orders, where the policy lets bots trade without stops) may be
+ * cancelled or changed whatever cover they give. Other action types have nothing to check.
  */
 export function stopCoverageProblems(input: {
   action: { type: string } & Record<string, unknown>;
@@ -204,14 +236,19 @@ export function stopCoverageProblems(input: {
         positionTpsl: old.positionTpsl && trigger !== undefined && tpsl === "sl" && w.r === true && isBuy === old.isBuy && coin === old.coin,
         isMarket: trigger?.isMarket === true,
         limitPrice: Number(w.p),
+        // The replacement is a new order: nothing of it has filled, and nothing is attached to it.
+        filledSize: 0,
+        attachedStops: [],
       };
       replaced.set(i, order);
     }
   }
   // Changes to free targets count as already made, so only the others are compared.
   const apply = (only?: ReadonlySet<number>) => book.orders.flatMap((o, i) => (only !== undefined && !only.has(i) ? [o] : removed.has(i) ? [] : [replaced.get(i) ?? o]));
-  const before = apply(free);
-  const after = apply();
+  // Attached stops still waiting for their entry to fill never count, before or after.
+  const waiting = waitingStops(book.orders);
+  const before = placedOnly(apply(free), waiting);
+  const after = placedOnly(apply(), waiting);
   const problems: string[] = [];
   if (missing.length > 0) {
     const shown = missing.slice(0, 5).join(", ");
@@ -219,16 +256,51 @@ export function stopCoverageProblems(input: {
       `${missing.length === 1 ? `Order ${shown} isn't` : `Orders ${shown}${missing.length > 5 ? ` and ${missing.length - 5} more` : ""} aren't`} among the account's open orders on the markets this names, so the required stop-losses can't be checked; nothing is cancelled or changed.`,
     );
   }
+  // A stop-loss still waiting for its entry (should Hyperliquid list it as an order of its own) is that entry's cover
+  // once it fills: it goes only with its entry, in the same action, or as a free target.
+  const parentOf = new Map<number, number>();
+  book.orders.forEach((o, i) => {
+    if (!o.reduceOnly && Array.isArray(o.attachedStops)) for (const oid of o.attachedStops) if (!parentOf.has(oid)) parentOf.set(oid, i);
+  });
+  for (const i of [...removed, ...replaced.keys()]) {
+    const child = book.orders[i]!;
+    const parent = parentOf.get(child.oid);
+    if (free.has(i) || parent === undefined || parent === i || removed.has(parent) || replaced.has(parent)) continue;
+    problems.push(
+      `Order ${child.oid} is the stop-loss attached to the ${child.coin} order ${book.orders[parent]!.oid}, which Hyperliquid places once that order fills; cancel or change that order together with it instead.`,
+    );
+  }
   const max = input.maxStopLossDistancePct;
+  // Partly filled entries this cancels or changes whose attached stop-loss goes with them, by coin and side.
+  const dropped = new Map<string, { isBuy: boolean; stops: Set<number> }>();
+  for (const i of [...removed, ...replaced.keys()]) {
+    const o = book.orders[i]!;
+    const stops = Array.isArray(o.attachedStops) ? o.attachedStops : [];
+    if (free.has(i) || o.reduceOnly || !(o.filledSize > 0) || stops.length === 0) continue;
+    const key = `${o.coin}|${o.isBuy}`;
+    const entry = dropped.get(key) ?? { isBuy: o.isBuy, stops: new Set<number>() };
+    for (const oid of stops) entry.stops.add(oid);
+    dropped.set(key, entry);
+  }
   for (const p of book.positions) {
     if (!touched.has(p.coin) || p.size === 0) continue;
     const had = coveredSize(p, before, max);
     const left = coveredSize(p, after, max);
-    if (!(left < had - Math.abs(p.size) * 1e-9)) continue;
+    if (left < had - Math.abs(p.size) * 1e-9) {
+      problems.push(
+        positionCovered(p, before, max)
+          ? `This would leave the open ${p.coin} position without a stop-loss${max !== undefined ? ` within ${max}% of its entry` : ""}; place the new stop first.`
+          : `This would leave less of the open ${p.coin} position covered by stop-losses${within(max)} than now; place the new stop first.`,
+      );
+      continue;
+    }
+    // A partly filled entry on the position's side: its attached stop-loss goes with it (it never counts while it
+    // waits: `placedOnly`).
+    const lost = dropped.get(`${p.coin}|${p.size > 0}`);
+    if (lost === undefined) continue;
+    if (positionCovered(p, after, max)) continue;
     problems.push(
-      positionCovered(p, before, max)
-        ? `This would leave the open ${p.coin} position without a stop-loss${max !== undefined ? ` within ${max}% of its entry` : ""}; place the new stop first.`
-        : `This would leave less of the open ${p.coin} position covered by stop-losses${within(max)} than now; place the new stop first.`,
+      `Cancelling or changing the partly filled ${p.coin} order would also cancel the stop-loss attached to it (Hyperliquid places that only once the order fills completely), leaving the open ${p.coin} position without a full stop-loss${within(max)}; place a stop for the position first.`,
     );
   }
   return problems;
@@ -279,9 +351,11 @@ export function positionAfterEntriesProblem(input: { coin: string; legs: readonl
       positionTpsl: false,
       isMarket: l.isMarket === true,
       limitPrice: l.price,
+      filledSize: 0,
+      attachedStops: [],
     });
   }
-  const orders = [...input.book.orders, ...placed];
+  const orders = [...placedOnly(input.book.orders, waitingStops(input.book.orders)), ...placed];
   const fmt = (x: number) => String(Math.round(x * 1e8) / 1e8);
   for (const buys of [true, false]) {
     const entries = input.legs.filter((l) => l.coin === coin && !l.reduceOnly && l.isBuy === buys);
