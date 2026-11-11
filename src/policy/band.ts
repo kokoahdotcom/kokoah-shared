@@ -165,7 +165,8 @@ function triggerNearMark(input: TriggerAllowanceInput): boolean {
 /**
  * The limit slippage (bps, at most Hyperliquid's 1000 for market TP/SL) a signer compiles a market trigger with, so its
  * limit stays within {@link triggerLimitAllowancePct}: `compileAction`'s `marketTriggerSlippageBps`, from the policy
- * that will check it and the signer's own mark prices.
+ * that will check it and the signer's own mark prices. Pass the same marks the policy is then evaluated with: a trigger
+ * compiled as away from the mark that the check finds near it is refused (safe, but the order fails).
  */
 export function marketTriggerSlippageFor(
   policy: { priceBandPct: number },

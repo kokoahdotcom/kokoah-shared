@@ -164,6 +164,7 @@ export const SCHEDULE_CANCEL_MAX_LEAD_MS = 3_600_000;
  * Compiles an intent into the exact HL wire action.
  *
  * @throws {CompileError}
+ * @throws {RangeError} when `marketTriggerSlippageBps` returns anything but an integer from 0 to 1000 (a caller's bug).
  */
 export function compileAction(intentInput: ActionIntent | ActionIntentInput, options: CompileOptions): CompiledAction {
   let intent: ActionIntent;
