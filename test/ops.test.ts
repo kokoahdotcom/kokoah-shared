@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { czech, french, italian, japanese, korean, portuguese, simplifiedChinese, spanish, traditionalChinese } from "viem/accounts";
 import {
   OpsAggregator,
   cleanOpsEvent,
@@ -62,14 +63,73 @@ describe("scrubPhrases", () => {
     expect(scrubPhrases("repro legal winner thank year wave sausage n=1")).toBe("repro [phrase] n=1");
   });
 
+  it("hides a phrase written as a list: numbered, one word per line, dashes, pipes, a JSON array, a table", () => {
+    const words = PHRASE_CAPS.toLowerCase().split(" ");
+    for (const written of [
+      words.map((w, i) => `${i + 1}. ${w}`).join("\n"),
+      words.map((w, i) => `${i + 1}) ${w}`).join(" "),
+      words.map((w, i) => `${i + 1}: ${w}`).join("\n"),
+      words.join("\n"),
+      words.join("\r\n"),
+      words.join("-"),
+      words.join(" | "),
+      words.join(" / "),
+      words.join("_"),
+      words.join("\t"),
+      JSON.stringify(words),
+      JSON.stringify(words, null, 4),
+      `['${words.join("', '")}']`,
+      `| ${words.map((w, i) => `${i + 1} | ${w}`).join(" | ")} |`,
+      words.map((w) => `**${w}**`).join(" "),
+      words.map((w, i) => (i % 2 ? w.toUpperCase() : w)).join(" "),
+    ]) {
+      const out = scrubPhrases(`mine: ${written} ok`);
+      expect(out, written).toContain("[phrase]");
+      expect(out, written).not.toMatch(/legal|winner|thank|wave|sausage|worth|useful|yellow/i);
+    }
+  });
+
+  it("hides phrases of BIP-39's other word lists, with or without accents", () => {
+    const lists = { spanish, french, italian, portuguese, czech, japanese, korean, simplifiedChinese, traditionalChinese };
+    for (const [name, list] of Object.entries(lists)) {
+      const words = list.slice(300, 312);
+      for (const written of [words.join(name === "japanese" ? "\u3000" : " "), words.join(", "), words.map((w, i) => `${i + 1}. ${w}`).join("\n")]) {
+        expect(scrubPhrases(written), `${name}: ${written}`).toMatch(/^(1\. )?\[phrase\]$/);
+      }
+    }
+    const plain = spanish.slice(0, 12).map((w) => w.normalize("NFKD").replace(/\p{M}/gu, "").toUpperCase());
+    expect(scrubPhrases(plain.join(" "))).toBe("[phrase]");
+  });
+
   it("keeps ordinary text and short runs of those words", () => {
     for (const ordinary of [
       "TypeError: Cannot read properties of null (reading 'extensions')",
       "That recovery phrase is not valid.",
       "the order was rejected because the price moved too far",
       "legal winner thank year wave",
+      "legal-winner-thank-year-wave",
+      // The end of a sentence or a clause joins no list.
+      "Kokoah started tracking this market just now. Try again in a few minutes.",
+      "Use email, Google or a passkey, or connect a wallet you already have. You sign one readable message.",
+      "Pro order types that work over time: Scale, Chase, TWAP, Trailing stop and Bracket.",
+      "close half of my BTC long at 65000 and set a stop at 60000",
+      "Buy 0.5 ETH at market, stop loss 5% below entry, take profit at 4000",
+      "open a 3x short on xyz:TSLA with 200 USDC, limit 412.5",
+      "비트코인 가격이 오늘 많이 올랐어요. 지금 롱 포지션을 열어도 될까요?",
+      "今日はビットコインが上がりました。ロングを開いてもいいですか？",
+      "比特币今天上涨了很多。我现在可以开多单吗？",
+      "El bitcoin subió mucho hoy. ¿Puedo abrir una posición larga ahora?",
+      "Le bitcoin a beaucoup monté aujourd'hui. Puis-je ouvrir une position longue maintenant ?",
+      "Bitcoin dnes hodně vzrostl. Můžu teď otevřít dlouhou pozici?",
     ])
       expect(scrubPhrases(ordinary), ordinary).toBe(ordinary);
+  });
+
+  it("keeps the text around a phrase and hides each phrase once", () => {
+    const words = PHRASE_CAPS.split(" ");
+    expect(scrubPhrases(`a: ${words.join("\n")}\nb: ${PHRASE}.`)).toBe("a: [phrase]\nb: [phrase].");
+    expect(scrubPhrases(`${words.slice(0, 6).join(" ")}. ${words.slice(6).join(" ")}`)).toBe("[phrase]. [phrase]");
+    expect(scrubPhrases("[phrase]")).toBe("[phrase]");
   });
 
   it("is part of scrubOpsText, also for a phrase in a quoted secret", () => {

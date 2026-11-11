@@ -19,7 +19,7 @@
  *   a sender marks exactly those and never posts a message (or its mention) twice.
  */
 
-import { english } from "viem/accounts";
+import { czech, english, french, italian, japanese, korean, portuguese, simplifiedChinese, spanish, traditionalChinese } from "viem/accounts";
 
 export type OpsSeverity = "critical" | "error" | "warning";
 
@@ -81,35 +81,87 @@ export interface OpsProblemNotice {
 const SECRET_KEYS =
   "password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key|apikey|x-api-key|authorization|auth|cookie|set-cookie|session|signature|private[_-]?key|privatekey|mnemonic|seed|hmac|kek|credential|credentials";
 
-/** BIP-39's English words: the recovery phrases of Ethereum and Bittensor wallets are made of them. */
-const PHRASE_WORDS: ReadonlySet<string> = new Set(english);
-/** This many of those words in a row are taken for a recovery phrase (or part of one): ordinary text seldom has them. */
-export const PHRASE_RUN = 6;
+/** A word as recovery phrases are compared: lowercase, with accents and other marks taken off (BIP-39 uses NFKD). */
+const foldWord = (w: string): string => (/^[A-Za-z]+$/.test(w) ? w.toLowerCase() : w.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase());
 
 /**
- * Hides recovery phrases: a run of at least {@link PHRASE_RUN} BIP-39 words (any case, between spaces, commas or line
- * breaks) becomes `[phrase]`, also inside a longer run of words. The backend's error reports (src/routes/support.ts) and
- * the app's (src/services/errorReports.ts) use it as well as {@link scrubOpsText}.
+ * BIP-39's ten word lists (English, which Ethereum and Bittensor wallets use, and the Spanish, French, Italian,
+ * Portuguese, Czech, Japanese, Korean and both Chinese ones other wallets offer), each folded with {@link foldWord}.
+ * A phrase's words all come from one list.
+ */
+const PHRASE_LISTS: readonly ReadonlySet<string>[] = [english, spanish, french, italian, portuguese, czech, japanese, korean, simplifiedChinese, traditionalChinese].map(
+  (list) => new Set(list.map(foldWord)),
+);
+/** This many of those words in a row are taken for a recovery phrase (or part of one): ordinary text seldom has them. */
+export const PHRASE_RUN = 6;
+/**
+ * The longest stretch without letters that still joins two words of a phrase: what lists put between them (`", "`,
+ * `"\n12. "`, `" | "`, `"-"`, a JSON array's `",\n    "`, a table's `" | 7 | "`).
+ */
+const PHRASE_GAP = 16;
+/**
+ * Whether the stretch between two words could be a list's: what ends a sentence or a clause (`.`, `!`, `?`, `;`, `:`,
+ * also full-width) or marks up text (`<`, `>`) never is, except the full stop or colon of numbering (`2.`, `3)`, `4:`).
+ */
+const listGap = (gap: string): boolean => gap.length <= PHRASE_GAP && !/[.!?;:<>。！？；：．]/.test(gap.replace(/\d+[.):]/g, ""));
+/** No BIP-39 word is longer (in UTF-16 units, before folding): longer runs of letters are never looked up. */
+const MAX_WORD = 16;
+
+/**
+ * Hides recovery phrases: a run of at least {@link PHRASE_RUN} words of one BIP-39 list becomes `[phrase]`, also
+ * inside a longer run of words. Words match in any case and with or without accents, and anything without letters of
+ * up to {@link PHRASE_GAP} characters may stand between them, as in lists: spaces, commas, line breaks, numbering
+ * (`1.`, `2)`), dashes, pipes, quotes and brackets (a JSON array); never the end of a sentence (see {@link listGap}).
+ * Words written with nothing between them (Chinese without spaces) aren't found. The backend's error reports
+ * (src/routes/support.ts) and AI checks, and the app's error reports (src/services/errorReports.ts), use it as well as
+ * {@link scrubOpsText}.
  */
 export function scrubPhrases(s: string): string {
-  return s.replace(/(?<![A-Za-z])[A-Za-z]{3,8}(?![A-Za-z])(?:[\s,]{1,4}[A-Za-z]{3,8}(?![A-Za-z]))+/g, (run) => {
-    const parts = run.split(/([\s,]+)/);
-    const out: string[] = [];
-    for (let i = 0; i < parts.length; ) {
-      let j = i;
-      while (j < parts.length && PHRASE_WORDS.has(parts[j]!.toLowerCase())) j += 2;
-      if ((j - i) / 2 >= PHRASE_RUN) {
-        out.push("[phrase]");
-        if (j - 1 < parts.length) out.push(parts[j - 1]!);
-        i = j;
-      } else {
-        out.push(parts[i]!);
-        if (i + 1 < parts.length) out.push(parts[i + 1]!);
-        i += 2;
-      }
+  // Each word of a list: where it is, the lists it is in (one bit each), and whether it follows a word of one of those
+  // lists across a list's gap. Other words only break runs.
+  const words: { start: number; end: number; in: number; joins: boolean }[] = [];
+  let any = 0;
+  let prevEnd = 0;
+  let prevIn = 0;
+  for (const m of s.matchAll(/[\p{L}\p{M}]+/gu)) {
+    const w = m[0];
+    let lists = 0;
+    if (w.length <= MAX_WORD) {
+      const folded = foldWord(w);
+      for (let i = 0; i < PHRASE_LISTS.length; i++) if (PHRASE_LISTS[i]!.has(folded)) lists |= 1 << i;
     }
-    return out.join("");
-  });
+    if (lists !== 0) words.push({ start: m.index, end: m.index + w.length, in: lists, joins: (prevIn & lists) !== 0 && listGap(s.slice(prevEnd, m.index)) });
+    any |= lists;
+    prevEnd = m.index + w.length;
+    prevIn = lists;
+  }
+  if (any === 0) return s;
+  // Spans to hide, from each list's runs (a run may belong to two lists: the spans then overlap).
+  const spans: [number, number][] = [];
+  for (let list = 0; list < PHRASE_LISTS.length; list++) {
+    const bit = 1 << list;
+    if ((any & bit) === 0) continue;
+    let first = -1;
+    for (let i = 0; i <= words.length; i++) {
+      const w = words[i];
+      const member = w !== undefined && (w.in & bit) !== 0;
+      if (member && first >= 0 && w.joins) continue;
+      if (first >= 0 && i - first >= PHRASE_RUN) spans.push([words[first]!.start, words[i - 1]!.end]);
+      // A word of the list after a gap no list has starts a run of its own.
+      first = member ? i : -1;
+    }
+  }
+  if (spans.length === 0) return s;
+  spans.sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let at = -1;
+  for (const [start, end] of spans) {
+    if (end <= at) continue;
+    // A span that starts inside the previous one only makes it longer.
+    if (start > at) out += `${s.slice(Math.max(at, 0), start)}[phrase]`;
+    at = end;
+  }
+  return out + s.slice(at);
 }
 
 /** Longest text scrubbed (callers keep far less): bounds the work on attacker-supplied text. */
