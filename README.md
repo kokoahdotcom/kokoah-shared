@@ -169,7 +169,7 @@ const r = assessOrderRisk({
   market: { coin: "BTC", maxLeverage: 40, marginTiers: registry.require("BTC").marginTiers },
   side: "buy", size: 0.1, orderType: "market", markPrice: 100_000, leverage: 5, marginMode: "cross",
   account: { equityUsd: 10_000 },
-  fees: { takerRate: 0.00045, makerRate: 0.00015, builderFeeTenthsBps: 25 },
+  fees: { takerRate: 0.00045, makerRate: 0.00015, builderFeeTenthsBps: 45 },
   stopLoss: { triggerPrice: 98_000 },
   fundingRateHourly: 0.0000125,
 });
@@ -203,7 +203,7 @@ key order. `generateCloid(origin?)`, `deriveCloid(seed, origin?)`, `parseCloid`,
 ```ts
 const compiled = compileAction(intent, {
   registry,
-  builder: { address: KOKOAH_BUILDER, feeTenthsBps: 25 },     // builder: {b, f} on every order action
+  builder: { address: KOKOAH_BUILDER, feeTenthsBps: 45 },     // builder: {b, f} on every order action
   getMidPrice: (coin) => mids[coin],                         // needed for market orders
 });
 compiled.action;       // { type: "order", orders: [parent, tp, sl], grouping: "normalTpsl", builder: {b, f} }
@@ -247,7 +247,8 @@ const body2 = await prepareL1Request({ wallet: agentAccount, network: net, compi
 `PolicySchema`, `parsePolicy`, `evaluatePolicy(subject, context)`, `DENIED_ACTION_TYPES`,
 `ALLOWLISTABLE_ACTION_TYPES`, presets `createManualTradingPolicy` / `createGuardianPolicy`, and signed policies:
 `preparePolicySignature`, `buildPolicyTypedData`, `verifyPolicySignature`, `recoverPolicySigner`, `hashPolicy`,
-`canonicalPolicyJson`, `policyTypedDataFields`, `summarizePolicy`.
+`canonicalPolicyJson`, `policyTypedDataFields`, `summarizePolicy`; a policy's builder against the current one:
+`policyBuilderOutdated` (signed for a fee below the current standard fee, or for another builder) and `withCurrentBuilder`.
 
 Signed policies come in two typed-data formats, named by `authorization.typedDataVersion` (the EIP-712 domain version
 of "Kokoah Policy", so the signature binds it). **Format 2** (`POLICY_EIP712_TYPES_V2`, `POLICY_TYPED_DATA_VERSION`)
@@ -493,7 +494,10 @@ type Policy = {
   maxStopLossDistancePct?: number;                   // attached stop within X% of entry (optional)
   priceBandPct: number;                              // orders that execute now vs mark (resting limits: 50%)
   allowedVaultAddresses: `0x${string}`[];            // [] = master account only
-  requiredBuilder: { b: `0x${string}`; f: number } | null;
+  requiredBuilder: { b: `0x${string}`; f: number } | null;  // f caps every order's fee; signed for a fee below
+                                                     // the current standard fee or for another builder, the policy
+                                                     // is outdated (policyBuilderOutdated) and is signed again
+                                                     // with withCurrentBuilder
   maxExpiresAfterWindowMs: number | null;            // non-null ⇒ expiresAfter required and ≤ now + window
   allowedOrigins?: IntentOrigin[];
   exemptReduceOnlyFromNotionalCaps: boolean;         // default true

@@ -17,6 +17,8 @@ import {
   hashPolicy,
   parsePolicy,
   type Policy,
+  policyBuilderOutdated,
+  withCurrentBuilder,
   type PolicyAuthorization,
   type PolicyContext,
   POLICY_EIP712_TYPES,
@@ -340,6 +342,16 @@ describe("compiled and wire actions", () => {
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: wrong }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
     const other = compileAction(entry(), { registry, builder: { ...builder, address: "0x2222222222222222222222222222222222222222" } });
     expect(codes(evaluatePolicy({ kind: "compiled", compiled: other }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
+  });
+
+  it("refuses an order at a raised standard fee under a policy signed before, until it is signed again", () => {
+    const raised = { ...builder, feeTenthsBps: BUILDER.f + 20 };
+    const c = compileAction(entry(), { registry, builder: raised });
+    expect(policyBuilderOutdated(policy, raised)).toBe(true);
+    expect(codes(evaluatePolicy({ kind: "compiled", compiled: c }, ctx()))).toEqual(["BUILDER_MISMATCH"]);
+    const again = withCurrentBuilder(policy, raised);
+    expect(policyBuilderOutdated(again, raised)).toBe(false);
+    expect(evaluatePolicy({ kind: "compiled", compiled: c }, ctx({ policy: again })).allowed).toBe(true);
   });
 
   it("accepts a lower builder fee (a promotion) but never a higher one", () => {
