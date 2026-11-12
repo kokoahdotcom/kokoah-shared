@@ -118,7 +118,8 @@ describe("scrubPhrases", () => {
       ["en Word #1:", PHRASE_CAPS.split(" ").map((w, i) => `Word #${i + 1}: ${w}`).join("\n")],
     ] as const) {
       expect(scrubPhrases(written), name).toContain("[phrase]");
-      expect(scrubPhrases(written), name).not.toContain(name.startsWith("en") ? "Legal" : name.startsWith("zh") ? zh[5]! : "\u0000");
+      const words = name.startsWith("en") ? ["Legal", "winner"] : name.startsWith("zh") ? zh : name.startsWith("ko") ? korean.slice(300, 312) : japanese.slice(300, 312);
+      for (const w of words) expect(scrubPhrases(written), `${name}: ${w}`).not.toContain(w);
     }
   });
 
@@ -145,11 +146,18 @@ describe("scrubPhrases", () => {
       "El bitcoin subió mucho hoy. ¿Puedo abrir una posición larga ahora?",
       "Le bitcoin a beaucoup monté aujourd'hui. Puis-je ouvrir une position longue maintenant ?",
       "Bitcoin dnes hodně vzrostl. Můžu teď otevřít dlouhou pozici?",
+      // Korean common nouns in a row, prose joined by `;` or `-`, and column names: no phrase.
+      "오늘 시장 상황 가격 변동 확인 부탁",
+      "내일 아침 시장 분위기 정리 부탁",
+      "While an earlier action is being checked, new orders that add risk wait; reduce-only orders and cancels still go through.",
+      "SELECT user_agent, agent_address, agent_name, valid_until_ms FROM linked_devices",
       // Dates and timeframes: one-character words with numbers between them.
       "2026年11月11日10时30分15秒",
       "1分 5分 15分 1时 4时 1日",
       "1分、5分、15分、1时、4时、1日",
       "第1、第2、第3、第4、第5、第6天",
+      "第1.1节 第1.2节 第1.3节 第1.4节 第1.5节 第1.6节",
+      "1.5元 2.5元 3.5元 4.5元 5.5元 6.5元",
       "２０２６年１１月１１日１０时３０分１５秒",
       "2026년 11월 11일",
     ])
@@ -164,6 +172,22 @@ describe("scrubPhrases", () => {
       // A few milliseconds each; the bound only catches work that grows faster than the text (a loaded machine is slow).
       expect(performance.now() - t0, input.slice(0, 12)).toBeLessThan(1000);
     }
+  });
+
+  it("needs a whole phrase only where words are joined as prose, names or Korean sentences join them", () => {
+    const words = PHRASE_CAPS.toLowerCase().split(" ");
+    // Six words joined by hyphens, semicolons or underscores, or by spaces in Korean, stay; twelve are hidden.
+    for (const join of ["-", "; ", "_"]) {
+      expect(scrubPhrases(words.slice(0, 6).join(join)), join).toBe(words.slice(0, 6).join(join));
+      expect(scrubPhrases(words.join(join)), join).toBe("[phrase]");
+    }
+    const ko = korean.slice(300, 312);
+    expect(scrubPhrases(ko.slice(0, 6).join(" "))).toBe(ko.slice(0, 6).join(" "));
+    expect(scrubPhrases(ko.join(" "))).toBe("[phrase]");
+    // A list's marks still hide six: Korean commas too, and a list next to a hyphen.
+    expect(scrubPhrases("가격, 변동, 시장, 상황, 확인, 부탁")).toBe("[phrase]");
+    expect(scrubPhrases(ko.slice(0, 6).join(", "))).toBe("[phrase]");
+    expect(scrubPhrases("legal, winner, thank, year, wave, sausage-worth")).toBe("[phrase]-worth");
   });
 
   it("keeps the text around a phrase and hides each phrase once", () => {

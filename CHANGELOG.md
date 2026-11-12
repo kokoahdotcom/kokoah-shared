@@ -7,6 +7,10 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- `ops`: `scrubPhrases` finds recovery phrases written as lists (numbered, one word per line, commas, pipes, JSON) and in
+  all ten BIP-39 word lists, in any case and with or without accents, and never joins words across prose punctuation,
+  dates or prices. Words joined only by hyphens, semicolons or underscores, or by spaces in Korean, need a whole phrase
+  (12 words). `scrubOpsText` hides phrases after its key rules.
 - `policy`: a trigger's limit may sit max(`priceBandPct`, 10%) from its trigger only when it is reduce-only and away from
   the mark (more than `priceBandPct` from it); an entry trigger, or one near the mark, gets `priceBandPct`
   (`triggerLimitAllowancePct`). `checkTriggerPriceBand` and `triggerLimitBandProblem` take an optional `reduceOnly`
