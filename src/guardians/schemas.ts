@@ -115,7 +115,16 @@ export const BreakevenRuleSchema = v.pipe(
      * `triggerPrice` must be present in `PositionState.orders`); if it is not open, a new position stop is placed.
      */
     stopOrder: v.optional(OrderRef),
-    state: v.optional(v.object({ ...SeqState, moved: v.optional(v.boolean(), false), stopCloid: v.optional(CloidSchema), side: v.optional(PositionSideSchema) })),
+    state: v.optional(
+      v.object({
+        ...SeqState,
+        moved: v.optional(v.boolean(), false),
+        stopCloid: v.optional(CloidSchema),
+        /** The stop it moved was a whole-position TP/SL (it was kept one). */
+        stopWhole: v.optional(v.boolean()),
+        side: v.optional(PositionSideSchema),
+      }),
+    ),
   }),
   v.check((r) => r.trigger.kind !== "rMultiple" || r.initialStopPrice !== undefined, "rMultiple triggers need initialStopPrice"),
 );
@@ -186,6 +195,8 @@ export const TrailingStopRuleSchema = v.strictObject({
       extreme: v.optional(v.number()),
       stopPrice: v.optional(v.string()),
       stopCloid: v.optional(CloidSchema),
+      /** The stop it manages is a whole-position TP/SL (moved as one, never replaced by a sized stop). */
+      stopWhole: v.optional(v.boolean()),
     }),
   ),
 });
