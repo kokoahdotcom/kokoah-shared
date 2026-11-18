@@ -19,3 +19,4 @@ export * from "./origins.js";
 export * from "./builder.js";
 export * from "./dailyLoss.js";
 export * from "./stopCoverage.js";
+export { isWholePositionWire, WHOLE_POSITION_SIZE } from "./wire.js";

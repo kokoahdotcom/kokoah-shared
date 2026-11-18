@@ -8,8 +8,10 @@
  * or a position TP/SL, that can fill when it fires ({@link stopCanFill}: a market trigger, or a limit beyond its
  * trigger), each within `maxStopLossDistancePct` of the entry price on the losing side when the policy sets it (a stop
  * at or past the entry, locking in profit, always counts). The cover is the size those stops close, at most the
- * position's. Only positions an action touches are compared, and only cover it takes away is refused: a position
- * without a stop before stays allowed to cancel and change its other orders.
+ * position's: a position TP/SL listed with size 0 (Hyperliquid's TP/SL for the whole position) closes all of it, one
+ * with a size of its own only that size, since it doesn't resize with the position. Only positions an action touches
+ * are compared, and only cover it takes away is refused: a position without a stop before stays allowed to cancel and
+ * change its other orders.
  *
  * A stop-loss attached to an entry (grouping `normalTpsl`) is not cover until Hyperliquid places it: its docs say it
  * places the children of an order only once that order fills completely, and cancels them with it when the user
@@ -31,13 +33,17 @@ export interface AccountOrder {
   /** Lowercase. */
   cloid?: string;
   isBuy: boolean;
-  /** Remaining size (a position TP/SL may show 0: it closes the whole position). */
+  /** Remaining size (a position TP/SL for the whole position shows 0: it closes whatever is open when it fires). */
   size: number;
   isTrigger: boolean;
   triggerPrice?: number;
   tpsl?: "tp" | "sl";
   reduceOnly: boolean;
-  /** A position TP/SL: closes the whole position, whatever its size. */
+  /**
+   * A position TP/SL (grouping `positionTpsl`). Listed with size 0 it is Hyperliquid's TP/SL for the whole position and
+   * closes whatever is open when it fires; with a size of its own it is fixed at that size (HL TP/SL docs: it "will not
+   * resize with the position after being placed").
+   */
   positionTpsl: boolean;
   /**
    * A market trigger (Hyperliquid "Stop Market", wire `isMarket`): it executes at market when it fires. Required, like
@@ -152,7 +158,8 @@ export function coveredSize(p: AccountPosition, orders: readonly AccountOrder[],
   let have = 0;
   for (const o of orders) {
     if (!countsFor(p, o, maxDistancePct)) continue;
-    if (o.positionTpsl) return need;
+    // A whole-position TP/SL covers all of it; one with a size of its own only that size.
+    if (o.positionTpsl && !(o.size > 0)) return need;
     if (o.size > 0) have += o.size;
   }
   return Math.min(have, need);

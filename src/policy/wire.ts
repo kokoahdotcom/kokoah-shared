@@ -27,14 +27,43 @@ export function isAddress(v: unknown): v is string {
   return typeof v === "string" && ADDRESS.test(v);
 }
 
-/** Problems with one order wire (`{a, b, p, s, r, t, c?}`). */
-export function orderWireProblems(o: unknown, where: string): string[] {
+/** Hyperliquid's whole-position size: exactly "0" on the wire. */
+export const WHOLE_POSITION_SIZE = "0";
+
+/**
+ * True when an order wire is a whole-position TP/SL: size exactly "0", reduce-only, a stop or take-profit trigger.
+ * Hyperliquid's own app sends a TP/SL for the entire position this way (grouping `positionTpsl`); it closes whatever is
+ * open when it fires. Only {@link wireActionProblems} decides where one may appear.
+ */
+export function isWholePositionWire(o: unknown): boolean {
+  return isReduceOnlyExitWire(o) && (o as Rec).s === WHOLE_POSITION_SIZE;
+}
+
+/** A reduce-only stop or take-profit trigger order wire. */
+function isReduceOnlyExitWire(o: unknown): boolean {
+  if (!isRec(o) || o.r !== true || !isRec(o.t)) return false;
+  const tr = o.t.trigger;
+  return isRec(tr) && (tr.tpsl === "tp" || tr.tpsl === "sl");
+}
+
+/**
+ * Problems with one order wire (`{a, b, p, s, r, t, c?}`). The size must be positive, except a whole-position TP/SL
+ * ({@link isWholePositionWire}) where `wholePosition` allows it: a position TP/SL order action of exits only, or a
+ * modify (whose target the policy checks is a whole-position TP/SL).
+ */
+export function orderWireProblems(o: unknown, where: string, wholePosition = false): string[] {
   if (!isRec(o)) return [`${where}: order must be an object`];
   const p: string[] = [];
   if (!isUint(o.a)) p.push(`${where}: asset "a" must be a non-negative integer`);
   if (typeof o.b !== "boolean") p.push(`${where}: "b" must be a boolean`);
   if (!isPositiveDecimalString(o.p)) p.push(`${where}: price "p" must be a positive decimal string`);
-  if (!isPositiveDecimalString(o.s)) p.push(`${where}: size "s" must be a positive decimal string`);
+  if (!isPositiveDecimalString(o.s) && !(wholePosition && isWholePositionWire(o))) {
+    p.push(
+      o.s === WHOLE_POSITION_SIZE
+        ? `${where}: size "0" is allowed only for a reduce-only TP/SL for the whole position`
+        : `${where}: size "s" must be a positive decimal string`,
+    );
+  }
   if (typeof o.r !== "boolean") p.push(`${where}: "r" must be a boolean`);
   if (o.c !== undefined && !(typeof o.c === "string" && CLOID.test(o.c))) p.push(`${where}: cloid "c" is malformed`);
   const t = o.t;
@@ -64,7 +93,10 @@ export function wireActionProblems(w: Rec): string[] {
   switch (w.type) {
     case "order": {
       if (!Array.isArray(w.orders) || w.orders.length === 0) return ["order action needs a non-empty orders array"];
-      w.orders.forEach((o, i) => p.push(...orderWireProblems(o, `orders[${i}]`)));
+      // Size 0 only in a position TP/SL action of exits alone (Hyperliquid's TP/SL for the whole position, as its own
+      // app sends it: a take profit, a stop loss or both), never next to an entry.
+      const exitsOnly = w.grouping === "positionTpsl" && w.orders.every((o) => isReduceOnlyExitWire(o));
+      w.orders.forEach((o, i) => p.push(...orderWireProblems(o, `orders[${i}]`, exitsOnly)));
       const g = w.grouping;
       const groupingOk = g === undefined || g === "na" || g === "normalTpsl" || g === "positionTpsl" || (isRec(g) && isUint(g.p));
       if (!groupingOk) p.push("invalid grouping");
@@ -73,14 +105,15 @@ export function wireActionProblems(w: Rec): string[] {
     }
     case "modify":
       if (!oid(w.oid)) p.push("modify needs an oid (integer) or cloid");
-      p.push(...orderWireProblems(w.order, "order"));
+      // Size 0 keeps a whole-position TP/SL whole; the policy checks the target is a position TP/SL.
+      p.push(...orderWireProblems(w.order, "order", true));
       if (w.a !== undefined && w.a !== true) p.push('"a" must be omitted or true');
       break;
     case "batchModify":
       if (!Array.isArray(w.modifies) || w.modifies.length === 0) return ["batchModify needs a non-empty modifies array"];
       w.modifies.forEach((m, i) => {
         if (!isRec(m) || !oid(m.oid)) p.push(`modifies[${i}]: needs an oid or cloid`);
-        else p.push(...orderWireProblems(m.order, `modifies[${i}].order`));
+        else p.push(...orderWireProblems(m.order, `modifies[${i}].order`, true));
       });
       if (w.a !== undefined && w.a !== true) p.push('"a" must be omitted or true');
       break;
