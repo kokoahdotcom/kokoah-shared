@@ -128,6 +128,13 @@ const OrderIntentObject = v.strictObject({
   stopLoss: v.optional(TpslLegSchema),
   /** Trigger orders only: attach to the whole position (grouping `positionTpsl`). Requires reduceOnly. */
   positionTpsl: v.optional(v.boolean(), false),
+  /**
+   * Position TP/SL only: Hyperliquid's whole-position TP/SL, sent with size 0 as Hyperliquid's own app sends it. It closes
+   * whatever is open when it fires, so it grows and shrinks with the position; a position TP/SL with a size of its own
+   * stays fixed at that size. `size` is still required: the position's size now, for estimates and the prompt (it is
+   * not sent). Requires `positionTpsl`, `reduceOnly` and a stop or take-profit order type.
+   */
+  wholePosition: v.optional(v.boolean()),
   cloid: v.optional(CloidSchema),
   ...commonEntries,
 });
@@ -149,6 +156,7 @@ export function orderIntentProblems(o: OrderIntentShape): string[] {
   if (hasAttached && isTrigger) p.push("Attached TP/SL is only valid on market or limit entry orders");
   if (hasAttached && o.reduceOnly) p.push("Attached TP/SL is not valid on reduce-only orders");
   if (o.positionTpsl && (!isTrigger || !o.reduceOnly)) p.push("positionTpsl requires a reduce-only trigger order");
+  if (o.wholePosition && (!o.positionTpsl || !isTrigger || !o.reduceOnly)) p.push("wholePosition requires a reduce-only position TP/SL trigger order (positionTpsl)");
   const s = o.side === "buy" ? 1 : -1;
   if (o.stopLoss && o.orderType === "limit" && o.price !== undefined && s * (Number(o.price) - Number(o.stopLoss.triggerPrice)) <= 0) {
     p.push("Stop-loss trigger must be below the entry for a buy and above it for a sell");
@@ -216,6 +224,12 @@ const ModifyOrderObject = v.strictObject({
   triggerPrice: v.optional(PositiveDecimalSchema),
   tif: v.optional(v.picklist(TIFS)),
   reduceOnly: v.optional(v.boolean(), false),
+  /**
+   * The order is a whole-position TP/SL (listed with size 0): the replacement stays one, sent with size 0 like the
+   * original. `size` is the position's size now, for the prompt. Requires `reduceOnly` and a stop or take-profit order
+   * type; the signer checks on the account that the target is a position TP/SL.
+   */
+  wholePosition: v.optional(v.boolean()),
   /** Cloid of the replacement order (set it to the original cloid to keep tracking the order by cloid). */
   cloid: v.optional(CloidSchema),
 });
@@ -235,7 +249,8 @@ export const ModifyIntentSchema = v.pipe(
   v.rawCheck(({ dataset, addIssue }) => {
     if (!dataset.typed) return;
     const o = dataset.value.order;
-    const problems = orderIntentProblems({ ...o, kind: "order", reduceOnly: o.reduceOnly, positionTpsl: false, origin: dataset.value.origin });
+    // A whole-position modify is a position TP/SL's: the same rules as placing one.
+    const problems = orderIntentProblems({ ...o, kind: "order", reduceOnly: o.reduceOnly, positionTpsl: o.wholePosition === true, origin: dataset.value.origin });
     for (const message of problems) addIssue({ message });
   }),
 );
@@ -304,7 +319,7 @@ export const ActionIntentSchema = v.pipe(
     if (x.kind === "order") problems = orderIntentProblems(x);
     else if (x.kind === "cancel") problems = cancelProblems(x);
     else if (x.kind === "modify") {
-      problems = orderIntentProblems({ ...x.order, kind: "order", positionTpsl: false, origin: x.origin });
+      problems = orderIntentProblems({ ...x.order, kind: "order", positionTpsl: x.order.wholePosition === true, origin: x.origin });
     }
     for (const message of problems) addIssue({ message });
   }),

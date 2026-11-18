@@ -34,7 +34,7 @@ import { checkLimitPriceBand, checkTriggerPriceBand, type LimitTif, triggerLimit
 import type { Policy } from "./schema.js";
 import { type AccountBook, namedOrderRefs, positionAfterEntriesProblem, STOP_COVERAGE_ACTION_TYPES, stopCanFill, stopCoverageProblems } from "./stopCoverage.js";
 import { DENIED_ACTION_TYPES, DENIED_MESSAGES, type PolicyViolationCode } from "./types.js";
-import { isAddress, wireActionProblems } from "./wire.js";
+import { isAddress, isWholePositionWire, wireActionProblems } from "./wire.js";
 
 /** A policy violation. */
 export interface PolicyViolation {
@@ -154,6 +154,11 @@ interface OrderLeg {
   slippageBps?: number;
   /** Limit orders: time in force (intents default to GTC). */
   tif?: LimitTif;
+  /**
+   * A whole-position TP/SL on the wire (size 0, reduce-only): it closes whatever is open when it fires, so what it can
+   * close is the account's position now (`accountBook`), not `size`.
+   */
+  wholePosition?: boolean;
 }
 
 type AddFn = (code: PolicyViolationCode, message: string) => void;
@@ -319,6 +324,7 @@ export function evaluatePolicy(subject: PolicySubject, context: PolicyContext): 
     case "batchModify":
       // "a: true" (always place) places the new order even when nothing was cancelled — an order without a builder.
       if (policy.requiredBuilder && wire?.a === true) add("BUILDER_REQUIRED", "Always-place modifies would place orders without the Kokoah builder code.");
+      if (wire) for (const p of wholePositionModifyProblems(wire, context)) add("INVALID_SUBJECT", p);
       break;
     case "scheduleCancel": {
       // It cancels every open order, the user's own stops included: no further out than `compileAction` allows, also for
@@ -400,9 +406,24 @@ function checkOrderLegs(
     if (!coinAllowed(leg.coin)) add("COIN_NOT_ALLOWED", `${leg.coin} is not in the allowed markets.`);
     const rawMark = context.markPrices[leg.coin];
     const mark = typeof rawMark === "number" && Number.isFinite(rawMark) && rawMark > 0 ? rawMark : undefined;
-    if (!(leg.size > 0) || (leg.price !== undefined && !(leg.price > 0)) || (leg.triggerPrice !== undefined && !(leg.triggerPrice > 0))) {
+    if (!(leg.wholePosition === true || leg.size > 0) || (leg.price !== undefined && !(leg.price > 0)) || (leg.triggerPrice !== undefined && !(leg.triggerPrice > 0))) {
       add("INVALID_SUBJECT", `${leg.coin}: size and prices must be positive numbers.`);
       continue;
+    }
+    // A whole-position TP/SL closes what is open when it fires: the position now, as the signer read it. Reduce-only
+    // exits exempt from the caps need no size; any other needs the position read, or it is refused.
+    let size = leg.size;
+    if (leg.wholePosition === true && !(leg.reduceOnly && exempt)) {
+      const book = context.accountBook;
+      if (!book) {
+        add("INVALID_SUBJECT", `${leg.coin}: the position could not be read, so a TP/SL for the whole position can't be checked against the order limits.`);
+        continue;
+      }
+      size = Math.abs(book.positions.find((p) => p.coin === leg.coin)?.size ?? 0);
+      if (!Number.isFinite(size)) {
+        add("INVALID_SUBJECT", `${leg.coin}: the position's size could not be read.`);
+        continue;
+      }
     }
     // Notional at the worst plausible price: limit, trigger or mark (a sell's limit, e.g. a market sell's slippage
     // price, can sit well below the value it trades).
@@ -417,7 +438,7 @@ function checkOrderLegs(
       add("MARK_PRICE_UNAVAILABLE", `No mark price for ${leg.coin}.`);
       continue;
     }
-    const notionalUsd = leg.size * px;
+    const notionalUsd = size * px;
     if (!(leg.reduceOnly && exempt)) {
       actionNotional += notionalUsd;
       if (!(notionalUsd <= policy.maxOrderNotionalUsd)) {
@@ -689,6 +710,8 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
         ...(tif !== undefined ? { tif } : {}),
         reduceOnly: w.r,
         spot: isSpotAsset(w.a),
+        // `wireActionProblems` let size 0 through only for a whole-position TP/SL.
+        ...(isWholePositionWire(w) ? { wholePosition: true } : {}),
       };
     });
   }
@@ -750,6 +773,33 @@ function collectOrderLegs(intent: ActionIntent | undefined, wire: Wire | undefin
     ];
   }
   return [];
+}
+
+/**
+ * A modify that sends size 0 keeps a whole-position TP/SL whole: its target must be one, on the account as the signer
+ * read it (`accountBook`): a position TP/SL listed with size 0, on the same market and side. Anything else, or an
+ * account that wasn't read, is refused: size 0 means the whole position only there.
+ */
+function wholePositionModifyProblems(wire: Wire, context: PolicyContext): string[] {
+  const modifies: Array<{ oid: unknown; order: unknown }> =
+    wire.type === "modify" ? [{ oid: wire.oid, order: wire.order }] : wire.type === "batchModify" && Array.isArray(wire.modifies) ? (wire.modifies as Array<{ oid: unknown; order: unknown }>) : [];
+  const problems: string[] = [];
+  for (const m of modifies) {
+    if (!isWholePositionWire(m.order)) continue;
+    const book = context.accountBook;
+    if (!book) {
+      problems.push("The account's orders could not be read, so a TP/SL for the whole position can't be changed.");
+      continue;
+    }
+    const w = m.order as { a: number; b: boolean };
+    const coin = context.registry?.getByAssetId(w.a)?.coin;
+    const hits = book.orders.filter((o) => (typeof m.oid === "number" ? o.oid === m.oid : typeof m.oid === "string" && o.cloid !== undefined && o.cloid.toLowerCase() === m.oid.toLowerCase()));
+    const target = hits.length === 1 ? hits[0] : undefined;
+    if (!target || coin === undefined || target.coin !== coin || target.isBuy !== w.b || !target.positionTpsl || target.size !== 0 || !target.isTrigger) {
+      problems.push(`Size 0 changes only a TP/SL for the whole position (${String(m.oid)} isn't one on this market and side).`);
+    }
+  }
+  return problems;
 }
 
 function isSpotAsset(assetId: number): boolean {

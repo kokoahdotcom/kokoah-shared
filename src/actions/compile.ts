@@ -14,6 +14,10 @@
  *   (signers pass the policy's band, policy `marketTriggerSlippageFor`), rounded the same way (one tick further when
  *   rounding toward the trigger would land on it).
  * - Attached TP/SL legs use grouping `normalTpsl`: children are reduce-only, opposite side, same size as the parent.
+ * - A position TP/SL (`positionTpsl`) uses grouping `positionTpsl`. With `wholePosition` it goes out with size 0, as
+ *   Hyperliquid's own app sends a TP/SL for the entire position: it closes whatever is open when it fires, so it grows
+ *   and shrinks with the position. With a size of its own it is fixed at that size (HL TP/SL docs). A modify of a
+ *   whole-position TP/SL keeps size 0.
  * - Sizes and prices must already be valid for the market (the UI shows the rounded values); the compiler rejects
  *   anything it would have to round, instead of silently signing a different number.
  * - The builder goes on every order action except a spot buy: Hyperliquid charges builder fees on spot sells only.
@@ -208,7 +212,8 @@ export function compileAction(intentInput: ActionIntent | ActionIntentInput, opt
         slippage: options.marketTriggerSlippageBps,
       });
       const oid = "oid" in intent.target ? intent.target.oid : intent.target.cloid;
-      const raw = { type: "modify" as const, oid, order: wire };
+      // A whole-position TP/SL stays one: size 0, as Hyperliquid lists it and its own app modifies it.
+      const raw = { type: "modify" as const, oid, order: o.wholePosition ? { ...wire, s: "0" } : wire };
       return { action: canonical(ModifyRequest.entries.action, raw), cloids: o.cloid ? [o.cloid] : [], ...vault, intent };
     }
     case "updateLeverage": {
@@ -287,6 +292,8 @@ function compileOrder(intent: OrderIntent, options: CompileOptions): Omit<Compil
       cloid: parentCloid,
       slippage: options.marketTriggerSlippageBps,
     });
+    // Hyperliquid's whole-position TP/SL: size 0 (the intent's size, the position's now, was checked above).
+    if (intent.wholePosition) parent = { ...parent, s: "0" };
   }
 
   const orders: RawOrderWire[] = [parent];
