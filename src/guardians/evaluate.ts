@@ -73,6 +73,16 @@ export interface GuardianOrder {
   triggerPrice?: number;
   /** Limit price, when known (a chase taken over by the server keeps its price). */
   limitPrice?: number;
+  /**
+   * A position TP/SL listed without a size (Hyperliquid's whole-position kind): it closes whatever is open when it
+   * fires. When unset, an open trigger order listed with size 0 is taken as one (Hyperliquid lists only those so).
+   */
+  wholePosition?: boolean;
+}
+
+/** Whether an order is a whole-position TP/SL: a rule that moves it keeps it whole (it never places a new one). */
+export function isWholePositionOrder(o: GuardianOrder): boolean {
+  return o.wholePosition === true || (o.status === "open" && o.origSize === 0 && o.triggerPrice !== undefined);
 }
 
 /** Account, positions and orders. */
@@ -240,15 +250,17 @@ function existingStop(
   ps: PositionState,
   ownCloid: string | undefined,
   external: { oid?: number | undefined; cloid?: string | undefined } | undefined,
-): { target: { oid?: number | undefined; cloid?: string | undefined }; triggerPrice: number | undefined } | undefined {
+  /** Whether the rule's own stop was a whole-position TP/SL when it last moved it (used while it isn't listed). */
+  ownWhole?: boolean,
+): { target: { oid?: number | undefined; cloid?: string | undefined }; triggerPrice: number | undefined; whole: boolean } | undefined {
   if (ownCloid !== undefined) {
     const own = findOrder(ps.orders, { cloid: ownCloid });
-    return { target: { cloid: ownCloid }, triggerPrice: own?.triggerPrice };
+    return { target: { cloid: ownCloid }, triggerPrice: own?.triggerPrice, whole: own ? isWholePositionOrder(own) : ownWhole === true };
   }
   if (!external) return undefined;
   const o = findOrder(ps.orders, external);
   if (!o || o.status !== "open") return undefined;
-  return { target: external, triggerPrice: o.triggerPrice };
+  return { target: external, triggerPrice: o.triggerPrice, whole: isWholePositionOrder(o) };
 }
 
 /** Reduce-only market order closing `sz` of the position. */
@@ -273,7 +285,11 @@ function placeProtection(e: Emitter, coin: string, closeSide: Side, sz: string, 
   });
 }
 
-/** Modify an existing protective trigger order (new cloid for the replacement order). */
+/**
+ * Modify an existing protective trigger order (new cloid for the replacement order). A whole-position TP/SL (`whole`)
+ * stays one: the modify keeps `wholePosition` (wire size 0; `sz` is the position's now), so it still closes whatever is
+ * open when it fires.
+ */
 function modifyProtection(
   e: Emitter,
   target: { oid?: number | undefined; cloid?: string | undefined },
@@ -283,6 +299,7 @@ function modifyProtection(
   kind: "sl" | "tp",
   leg: RuleLeg | { triggerPrice: string },
   cloid: Cloid,
+  whole = false,
 ): void {
   const orderType = "orderType" in leg && leg.orderType === "limit" ? (kind === "sl" ? "stopLimit" : "takeProfitLimit") : kind === "sl" ? "stopMarket" : "takeProfitMarket";
   e.intent({
@@ -296,6 +313,7 @@ function modifyProtection(
       triggerPrice: leg.triggerPrice,
       ...("limitPrice" in leg && leg.limitPrice !== undefined ? { price: leg.limitPrice } : {}),
       reduceOnly: true,
+      ...(whole ? { wholePosition: true } : {}),
       cloid,
     },
   });
@@ -366,7 +384,7 @@ function evalBreakeven(rule: BreakevenRule, market: MarketState, ps: PositionSta
   if (s * (mark - Number(stopPx)) <= 0) return result(e, pinned, "armed", "Mark is not beyond the breakeven stop yet");
   const sz = size(pos.size, m);
   if (Number(sz) <= 0) return result(e, pinned, "armed", "Position is smaller than one lot");
-  const existing = existingStop(ps, st.stopCloid, rule.stopOrder);
+  const existing = existingStop(ps, st.stopCloid, rule.stopOrder, st.stopWhole);
   if (existing) {
     if (existing.triggerPrice === undefined) return result(e, pinned, "armed", "Existing stop's trigger price is unknown; not modifying it");
     if (s * (Number(stopPx) - existing.triggerPrice) <= 0) {
@@ -374,9 +392,10 @@ function evalBreakeven(rule: BreakevenRule, market: MarketState, ps: PositionSta
     }
   }
   const cloid = e.cloid();
-  if (existing) modifyProtection(e, existing.target, rule.coin, closingSide(pos), sz, "sl", { triggerPrice: stopPx }, cloid);
+  if (existing) modifyProtection(e, existing.target, rule.coin, closingSide(pos), sz, "sl", { triggerPrice: stopPx }, cloid, existing.whole);
   else placeProtection(e, rule.coin, closingSide(pos), sz, "sl", { triggerPrice: stopPx }, cloid);
-  return result(e, { ...pinned, moved: true, stopCloid: cloid, seq: e.seq }, "completed", `Stop moved to ${stopPx}`);
+  const stopWhole = existing?.whole === true;
+  return result(e, { ...pinned, moved: true, stopCloid: cloid, stopWhole, seq: e.seq }, "completed", `Stop moved to ${stopPx}`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -441,7 +460,7 @@ function evalTrailingStop(rule: TrailingStopRule, market: MarketState, ps: Posit
   const s = sign(pos);
   const mark = m.markPrice;
   const next = { ...st };
-  const existing = existingStop(ps, st.stopCloid, rule.stopOrder);
+  const existing = existingStop(ps, st.stopCloid, rule.stopOrder, st.stopWhole);
   // An external stop we don't know the price of must not be modified (it could be tighter than our trail).
   if (existing && st.stopCloid === undefined && existing.triggerPrice === undefined) {
     return result(e, st, st.activated ? "triggered" : "armed", "Existing stop's trigger price is unknown; not modifying it");
@@ -473,9 +492,10 @@ function evalTrailingStop(rule: TrailingStopRule, market: MarketState, ps: Posit
   const sz = size(pos.size, m);
   if (Number(sz) <= 0) return result(e, next, "triggered", "Position is smaller than one lot");
   const cloid = e.cloid();
-  if (existing) modifyProtection(e, existing.target, rule.coin, closingSide(pos), sz, "sl", { triggerPrice: candidate }, cloid);
+  if (existing) modifyProtection(e, existing.target, rule.coin, closingSide(pos), sz, "sl", { triggerPrice: candidate }, cloid, existing.whole);
   else placeProtection(e, rule.coin, closingSide(pos), sz, "sl", { triggerPrice: candidate }, cloid);
-  return result(e, { ...next, stopPrice: candidate, stopCloid: cloid, seq: e.seq }, "triggered", `Trailing stop set to ${candidate}`);
+  const stopWhole = existing?.whole === true;
+  return result(e, { ...next, stopPrice: candidate, stopCloid: cloid, stopWhole, seq: e.seq }, "triggered", `Trailing stop set to ${candidate}`);
 }
 
 // ---------------------------------------------------------------------------------------------

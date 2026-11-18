@@ -72,7 +72,9 @@ export interface ExecutionPlan {
  * Turns every `modify` of a trigger order into "place the new stop, then cancel the old one" (Kokoah algos never
  * `modify`: a modified order may lose its builder fee). The new stop is a reduce-only position TP/SL `order` with the
  * modify's replacement cloid; the cancel runs only if the new stop was placed, so the position is never left without
- * one, and a failed cancel (the old stop already filled or was canceled) is harmless.
+ * one, and a failed cancel (the old stop already filled or was canceled) is harmless. A modify of a whole-position
+ * TP/SL stays a modify: automation never places a new whole-position order (only the user can, after the signer
+ * frame's prompt), and a sized replacement would no longer cover what is added later.
  */
 export function placeThenCancel(intents: readonly ActionIntent[]): ExecutionPlan {
   const out: ActionIntent[] = [];
@@ -80,7 +82,7 @@ export function placeThenCancel(intents: readonly ActionIntent[]): ExecutionPlan
   const cleanup: number[] = [];
   for (const intent of intents) {
     const o = intent.kind === "modify" ? intent.order : undefined;
-    if (intent.kind !== "modify" || !o || o.orderType === "limit" || o.triggerPrice === undefined) {
+    if (intent.kind !== "modify" || !o || o.orderType === "limit" || o.triggerPrice === undefined || o.wholePosition === true) {
       out.push(intent);
       continue;
     }
