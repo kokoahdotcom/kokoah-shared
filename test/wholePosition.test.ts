@@ -131,6 +131,11 @@ describe("whole-position TP/SL policy", () => {
     // $50,000 of the position on top of $360,000 already used today passes $400,000.
     expect(evalCompiled(wholeSl, { policy: strict, accountBook: book([], 0.5), dailyNotionalUsedUsd: 360_000 }).violations.map((v) => v.code)).toContain("DAILY_NOTIONAL_EXCEEDED");
   });
+  it("refuses it on a spot market", () => {
+    const spot = { ...(compile(wholeSl).action as unknown as Record<string, unknown>) };
+    const orders = (spot.orders as Array<Record<string, unknown>>).map((o) => ({ ...o, a: 10_107 }));
+    expect(evalWire({ ...spot, orders }).violations.map((v) => v.message).join(" ")).toMatch(/perpetual positions only/);
+  });
   it("refuses it when the caps need the position and it wasn't read", () => {
     const d = evalCompiled(wholeSl, { policy: strict });
     expect(d.allowed).toBe(false);

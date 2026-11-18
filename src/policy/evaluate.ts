@@ -412,6 +412,10 @@ function checkOrderLegs(
     }
     // A whole-position TP/SL closes what is open when it fires: the position now, as the signer read it. Reduce-only
     // exits exempt from the caps need no size; any other needs the position read, or it is refused.
+    if (leg.wholePosition === true && leg.spot) {
+      add("INVALID_SUBJECT", `${leg.coin}: a TP/SL for the whole position is for perpetual positions only.`);
+      continue;
+    }
     let size = leg.size;
     if (leg.wholePosition === true && !(leg.reduceOnly && exempt)) {
       const book = context.accountBook;
