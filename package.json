@@ -107,6 +107,11 @@
       "import": "./dist/vaults/index.js",
       "default": "./dist/vaults/index.js"
     },
+    "./report": {
+      "types": "./dist/report/index.d.ts",
+      "import": "./dist/report/index.js",
+      "default": "./dist/report/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
