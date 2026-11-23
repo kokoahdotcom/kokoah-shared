@@ -6,8 +6,13 @@ import {
   FEE_FINDINGS,
   HIGH_TAKER_SHARE,
   HL_ORDER_HISTORY,
+  isMonthKey,
   isOwnLiquidation,
+  lastDaysWindow,
   liquidatedPositions,
+  monthKey,
+  monthWindow,
+  reportWindow,
   stopsAtLiquidations,
   triggerKind,
   MIN_TRIPS,
@@ -1596,5 +1601,157 @@ describe("stop-losses at a liquidation", () => {
       state: "unread",
     });
     expect(stopsAtLiquidations([], ME, FROM, { history: h, open: {} })).toBeNull();
+  });
+});
+
+describe("windows", () => {
+  const OCT = monthWindow("2026-10");
+  const NOV = monthWindow("2026-11");
+
+  it("names a UTC calendar month, from its first millisecond through its last", () => {
+    expect(OCT).toEqual({ from: Date.UTC(2026, 9, 1), to: Date.UTC(2026, 10, 1) - 1 });
+    expect(monthWindow("2026-12")).toEqual({ from: Date.UTC(2026, 11, 1), to: Date.UTC(2027, 0, 1) - 1 });
+    expect(monthWindow("2028-02").to).toBe(Date.UTC(2028, 1, 29, 23, 59, 59, 999));
+    for (const bad of ["2026-13", "2026-00", "2026-1", "26-10", "2026-10-01", "0999-01", " 2026-10", ""]) {
+      expect(isMonthKey(bad)).toBe(false);
+      expect(() => monthWindow(bad)).toThrow(RangeError);
+    }
+    expect(isMonthKey("2026-10")).toBe(true);
+    expect(monthKey(OCT.from)).toBe("2026-10");
+    expect(monthKey(OCT.to)).toBe("2026-10");
+    expect(monthKey(OCT.to + 1)).toBe("2026-11");
+  });
+
+  it("defaults to the last 30 days, the same card as that window given", () => {
+    expect(lastDaysWindow(NOW)).toEqual({ from: FROM, to: NOW });
+    expect(reportWindow(NOW)).toEqual({ from: FROM, to: NOW, live: true });
+    const fills = [...trip({ at: D0, exit: 110 }), ...trip({ at: D0 + DAY, exit: 90 })];
+    const input = {
+      portfolio: portfolio([
+        [FROM, "0"],
+        [NOW, "0"],
+      ]),
+      states: [state(position("ETH", "1", "2000", "1900"))],
+    };
+    const plain = card(fills, input);
+    expect(plain.live).toBe(true);
+    expect(card(fills, { ...input, window: lastDaysWindow(NOW) })).toEqual(plain);
+  });
+
+  it("covers a past month alone, without the positions open now or Hyperliquid's 30-day figure", () => {
+    const now = Date.UTC(2026, 10, 3, 9, 0);
+    const c = buildReportCard({
+      address: ME,
+      now,
+      window: OCT,
+      fills: [
+        ...trip({ at: Date.UTC(2026, 8, 30, 23), hold: 2 * HOUR, exit: 150 }), // closed on Oct 1, opened in September
+        ...trip({ at: Date.UTC(2026, 9, 10), exit: 120, fee: "1" }),
+        ...trip({ at: Date.UTC(2026, 9, 31, 23), hold: 2 * HOUR, exit: 80 }), // still open when October ended
+        ...trip({ at: Date.UTC(2026, 10, 2), exit: 500 }), // November
+      ],
+      funding: {
+        rows: [fund(Date.UTC(2026, 9, 10, 0, 30), "BTC", "-2"), fund(Date.UTC(2026, 10, 2, 0, 30), "BTC", "-9")],
+        from: OCT.from,
+        through: OCT.to,
+        complete: true,
+      },
+      portfolio: portfolio([
+        [now - 30 * DAY, "0"],
+        [now, "400"],
+      ]),
+      // A position open now, near liquidation, that no fill in October touched.
+      states: [state(position("ETH", "1", "2000", "1950", "-40"))],
+    });
+    expect(c.live).toBe(false);
+    expect(c.coverage).toMatchObject({ from: OCT.from, to: OCT.to, fills: 4, complete: true });
+    // Oct 1's close counts its price result (it opened before), October's own trip counts whole, the last one only
+    // its opening; November's is left out.
+    expect(c.result.price.usd).toBe("70");
+    expect(c.result.fees.usd).toBe("2");
+    expect(c.result.funding.usd).toBe("-2");
+    expect(c.result.net.usd).toBe("66");
+    expect(c.trips.closed).toBe(1);
+    expect(c.trips.leftOut).toEqual({ carriedIn: 1, open: 1, gaps: 0 });
+    expect(c.rows.dayTrips).toHaveLength(2);
+    // Now's positions and Hyperliquid's figure describe today, not October.
+    expect(c.liquidations).toMatchObject({ open: [], positionsRead: false, nearest: null });
+    expect(c.result.hyperliquid).toBeNull();
+    expect(c.result.difference).toBeNull();
+    expect(c.findings.map((f) => f.key)).not.toContain("nearLiquidation");
+    // Funding that stops before the month's end leaves it incomplete.
+    const short = buildReportCard({
+      address: ME,
+      now,
+      window: OCT,
+      fills: [],
+      funding: { rows: [], from: OCT.from, through: OCT.to - DAY, complete: false },
+    });
+    expect(short.coverage).toMatchObject({ complete: false, funding: { through: OCT.to - DAY, complete: false } });
+  });
+
+  it("stops a month still under way at now, and compares it with Hyperliquid's figure from the month's start", () => {
+    const c = card(trip({ at: Date.UTC(2026, 10, 5), exit: 110 }), {
+      window: NOV,
+      funding: { rows: [], from: NOV.from, through: NOW, complete: true },
+      portfolio: portfolio([
+        [FROM, "0"],
+        [NOV.from - HOUR, "50"],
+        [NOW, "60"],
+      ]),
+      states: [state(position("ETH", "1", "2000", "1900"))],
+    });
+    expect(reportWindow(NOW, NOV)).toEqual({ from: NOV.from, to: NOW, live: true });
+    expect(c.live).toBe(true);
+    expect(c.coverage).toMatchObject({ from: NOV.from, to: NOW, fills: 2, complete: true });
+    expect(c.result.net.usd).toBe("10");
+    expect(c.result.hyperliquid).toMatchObject({ from: NOV.from - HOUR, to: NOW, pnl: "10", beforeWindow: true });
+    expect(c.liquidations).toMatchObject({ positionsRead: true, open: [{ coin: "ETH" }] });
+    expect(c.findings.map((f) => f.key)).toContain("nearLiquidation");
+  });
+
+  it("is incomplete for a month before the record's coverage that no read covered", () => {
+    const now = Date.UTC(2026, 10, 21);
+    // The record starts on Sep 20: September before it was read from nowhere, August not at all.
+    const recordFrom = Date.UTC(2026, 8, 20);
+    const sep = monthWindow("2026-09");
+    const partly = buildReportCard({
+      address: ME,
+      now,
+      window: sep,
+      fills: trip({ at: Date.UTC(2026, 8, 25), exit: 101 }),
+      unfilledGaps: [[sep.from - 40 * DAY, recordFrom - 1]],
+      funding: { rows: [], from: sep.from, through: sep.to, complete: true },
+    });
+    expect(partly.coverage).toMatchObject({
+      fillsComplete: false,
+      complete: false,
+      unfilledGaps: [[sep.from, recordFrom - 1]],
+    });
+    const aug = monthWindow("2026-08");
+    const before = buildReportCard({
+      address: ME,
+      now,
+      window: aug,
+      fills: [],
+      unfilledGaps: [[aug.from, aug.to]],
+      funding: { rows: [], from: aug.from, through: aug.to, complete: true },
+    });
+    expect(before.coverage).toMatchObject({ fills: 0, fillsComplete: false, unfilledGaps: [[aug.from, aug.to]] });
+    expect(before.live).toBe(false);
+  });
+
+  it("is empty for a month that hasn't started, without the positions open now", () => {
+    const dec = monthWindow("2026-12");
+    expect(reportWindow(NOW, dec)).toMatchObject({ from: dec.from, live: false });
+    const c = card(trip({ at: NOW - DAY }), {
+      window: dec,
+      states: [state(position("ETH", "1", "2000", "1950", "-40"))],
+    });
+    expect(c.live).toBe(false);
+    expect(c.coverage.fills).toBe(0);
+    expect(c.trips.closed).toBe(0);
+    expect(c.liquidations).toMatchObject({ open: [], positionsRead: false });
+    expect(c.findings.map((f) => f.key)).not.toContain("nearLiquidation");
   });
 });

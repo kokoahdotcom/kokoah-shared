@@ -4,7 +4,7 @@
  * same numbers without loading the calculation.
  */
 
-/** The window: the 30 days before now. */
+/** The default window: the 30 days before now (a calendar month is the other: `monthWindow`). */
 export const WINDOW_DAYS = 30;
 /** Trips a figure needs (win rate; each group of a habit). */
 export const MIN_TRIPS = 10;

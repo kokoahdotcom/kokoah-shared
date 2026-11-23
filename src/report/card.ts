@@ -1,8 +1,8 @@
 /**
- * The trading report card's numbers: one address's last 30 days of perps, after costs, with the count of rows behind
- * every figure (the app shows them as receipts and sample sizes). Pure functions over what the caller read: the app
- * reads it in the visitor's browser, and the backend can compute the same card from the same reads. The fixed numbers
- * are in `rules.ts`.
+ * The trading report card's numbers: one address's perps over a window (the last 30 days, or a calendar month), after
+ * costs, with the count of rows behind every figure (the app shows them as receipts and sample sizes). Pure functions
+ * over what the caller read: the app reads it in the visitor's browser, and the backend can compute the same card from
+ * the same reads. The fixed numbers are in `rules.ts`.
  *
  * Data (read by the caller, {@link ReportInput})
  * - Fills: the address's fills (Kokoah's history store, and Hyperliquid's `userFillsByTime` for the times the store
@@ -11,14 +11,17 @@
  *   `through`. When it doesn't reach over the window, the card's funding is not complete, and its coverage says how
  *   far it reaches.
  * - Hyperliquid's own PnL: `portfolio`'s `perpMonth` (perps on every dex). Open positions: `clearinghouseState` for
- *   each perp dex.
+ *   each perp dex. Both only for a window that reaches now.
  * - Orders, only when the address was liquidated in the window: `frontendOpenOrders` for each perp dex a liquidation
  *   was on (at most {@link MAX_ORDER_DEXES}), then one `historicalOrders` (every dex at once, at most
  *   {@link HL_ORDER_HISTORY} statuses). A failed read leaves the stop-loss check unread; the card goes on without it.
  *
- * Window and scope: the 30 days before `now` (rolling, inclusive), like Hyperliquid's own month. Perps only: the main
- * dex and HIP-3 dexes (`dex:COIN`); spot fills (`@107`, `PURR/USDC`) are counted in the coverage line and left out. A
- * HIP-3 dex's amounts are in its collateral token, a dollar stablecoin, and count as dollars.
+ * Window and scope: by default the 30 days before `now` (rolling, inclusive), like Hyperliquid's own month; or the
+ * window the caller gives (`input.window`; {@link monthWindow}: a calendar month in UTC), its end stopped at `now`
+ * ({@link reportWindow}). Positions open now and Hyperliquid's 30-day figure describe now, so only a window that reaches
+ * `now` (`live`: the last 30 days, or a month still under way) reads them; a window that ended earlier leaves both out.
+ * Perps only: the main dex and HIP-3 dexes (`dex:COIN`); spot fills (`@107`, `PURR/USDC`) are counted in the coverage
+ * line and left out. A HIP-3 dex's amounts are in its collateral token, a dollar stablecoin, and count as dollars.
  *
  * Money: totals are exact. Hyperliquid writes amounts as decimal strings with at most 8 decimals; they are summed in
  * integer units of 1e-8 (a `Sum`'s `usd` is a decimal string, as the API writes money). Trip figures (win rate,
@@ -148,6 +151,44 @@ const DAY = 86_400_000;
 const HOUR = 3_600_000;
 export const WINDOW_MS = WINDOW_DAYS * DAY;
 
+/** A card's window: from its start through its end (ms, both included). */
+export interface ReportWindow {
+  from: number;
+  to: number;
+}
+
+/** The card's default window: the {@link WINDOW_DAYS} days before `now` (rolling, inclusive). */
+export const lastDaysWindow = (now: number): ReportWindow => ({ from: now - WINDOW_MS, to: now });
+
+const MONTH_KEY = /^([1-9]\d{3})-(0[1-9]|1[0-2])$/;
+/** Whether `key` names a calendar month as `YYYY-MM` ("2026-11"). */
+export const isMonthKey = (key: string): boolean => MONTH_KEY.test(key);
+/** The calendar month (UTC) a time is in, as `YYYY-MM`. */
+export function monthKey(t: number): string {
+  const d = new Date(t);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+/**
+ * A calendar month in UTC (`YYYY-MM`): from its first millisecond through its last. A month still under way ends after
+ * now; the card stops it at `now` ({@link reportWindow}). A RangeError for anything but `YYYY-MM`.
+ */
+export function monthWindow(key: string): ReportWindow {
+  const m = MONTH_KEY.exec(key);
+  if (!m) throw new RangeError("Not a month: YYYY-MM expected");
+  const year = Number(m[1]);
+  const month = Number(m[2]) - 1;
+  return { from: Date.UTC(year, month, 1), to: Date.UTC(year, month + 1, 1) - 1 };
+}
+/**
+ * The window a card covers: `window` (default {@link lastDaysWindow}) with its end stopped at `now`. `live`: it holds
+ * `now`, so the positions open now and Hyperliquid's 30-day graph belong to it; a window that ended earlier, or one
+ * that hasn't started (empty), is not live, and the card leaves both out.
+ */
+export function reportWindow(now: number, window?: ReportWindow): ReportWindow & { live: boolean } {
+  const w = window ?? lastDaysWindow(now);
+  return { from: w.from, to: Math.min(w.to, now), live: w.from <= now && w.to >= now };
+}
+
 // ------------------------------------------------------------------------------------------------------ types
 
 /** A fill as Hyperliquid and Kokoah's history store write it (the app's fill type, with `twapId` and `liquidation`). */
@@ -206,17 +247,22 @@ export type Tool = "limitOrders" | "guardians" | "lossLock";
 
 export interface ReportInput {
   address: string;
-  /** The window's end (ms); it starts {@link WINDOW_DAYS} days before. */
+  /** When the card is made (ms): the default window's end, and the latest time any window reaches. */
   now: number;
+  /**
+   * The window (default: the {@link WINDOW_DAYS} days before `now`), its end stopped at `now`. One that ended before
+   * `now` leaves `states` and `portfolio` out: they describe now ({@link reportWindow}).
+   */
+  window?: ReportWindow;
   /** The address's fills (any order; spot and fills outside the window are left out here). */
   fills: readonly ReportFill[];
   /** Times in the window the fills may lack (no read covered them). */
   unfilledGaps?: readonly (readonly [number, number])[];
   /** Funding as it was read: entries whole from `from` through `through`. */
   funding: { rows: readonly ReportFundingRow[]; from: number; through: number; complete: boolean };
-  /** Hyperliquid's `portfolio` answer. */
+  /** Hyperliquid's `portfolio` answer; a live window only. */
   portfolio?: ReportPortfolio | null;
-  /** `clearinghouseState` for every perp dex (an entry null or undefined: that dex wasn't read). */
+  /** `clearinghouseState` for every perp dex (an entry null or undefined: that dex wasn't read); a live window only. */
   states?: readonly (ReportClearinghouse | null | undefined)[] | null;
   /** The orders for the stop-loss check (read only after liquidations); without them it is unread. */
   orders?: ReportOrders | null;
@@ -410,9 +456,9 @@ export interface Liquidations {
   cost: string;
   /** Whether they had a stop-loss set; null without liquidations. */
   stops: StopCheck | null;
-  /** Open positions, nearest to liquidation first (no liquidation price last). */
+  /** Open positions now, nearest to liquidation first (no liquidation price last); none in a past window. */
   open: OpenPosition[];
-  /** Every dex's positions were read. */
+  /** Every dex's positions were read (never in a past window: see {@link ReportCard.live}). */
   positionsRead: boolean;
   nearest: number | null;
 }
@@ -531,6 +577,12 @@ export interface ReportRows {
 }
 
 export interface ReportCard {
+  /**
+   * The window holds now (the last 30 days, or a month still under way): the positions open now and Hyperliquid's own
+   * figure are part of the card. False for a window that ended earlier or hasn't started: no positions
+   * (`liquidations.positionsRead` false, `open` empty) and no Hyperliquid figure (`result.hyperliquid` null).
+   */
+  live: boolean;
   coverage: Coverage;
   result: Result;
   costs: Costs;
@@ -655,8 +707,7 @@ export function mergeGaps(gaps: readonly (readonly [number, number])[], from: nu
 // ------------------------------------------------------------------------------------------------------ the card
 
 export function buildReportCard(input: ReportInput): ReportCard {
-  const to = input.now;
-  const from = to - WINDOW_MS;
+  const { from, to, live } = reportWindow(input.now, input.window);
   const address = input.address.toLowerCase();
 
   // Fills in the window, once each, oldest first; spot counted and left out.
@@ -725,8 +776,8 @@ export function buildReportCard(input: ReportInput): ReportCard {
   }
   const netUnits = price.u - fees.u + fund.u;
 
-  // Open positions now.
-  const states = input.states ?? null;
+  // Open positions now: only in a window that reaches now (a past one ended before them).
+  const states = live ? (input.states ?? null) : null;
   const positionsRead = !!states && states.length > 0 && states.every((s) => !!s);
   const open: OpenPosition[] = [];
   let unrealized = 0n;
@@ -794,7 +845,8 @@ export function buildReportCard(input: ReportInput): ReportCard {
   const brokenByGaps = gapTripList.length;
 
   // Hyperliquid's own figure and the difference.
-  const hyperliquid = hyperliquidPnl(input.portfolio, from);
+  // Hyperliquid's graph covers the last 30 days up to now: only a window that reaches now can be compared with it.
+  const hyperliquid = live ? hyperliquidPnl(input.portfolio, from) : null;
   let difference: Result["difference"] = null;
   if (hyperliquid) {
     const diff = units(hyperliquid.pnl) - netUnits;
@@ -883,7 +935,7 @@ export function buildReportCard(input: ReportInput): ReportCard {
     .filter((t) => t.closedAt !== null && (!t.incomplete || carriedClean.has(t.id)))
     .sort((a, b) => a.closedAt! - b.closedAt!);
   const days = daysOf(dayTrips);
-  const card = { coverage, result, costs, taker, liquidations, trips: tripSummary, habits, days };
+  const card = { live, coverage, result, costs, taker, liquidations, trips: tripSummary, habits, days };
   const rows: ReportRows = {
     address,
     fills: perp,
