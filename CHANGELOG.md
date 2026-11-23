@@ -7,6 +7,11 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- `report`: `buildReportCard` takes an optional `window` (`{ from, to }`, default the last 30 days before `now`, as
+  before), its end stopped at `now`. `monthWindow("YYYY-MM")` is a UTC calendar month, `lastDaysWindow(now)` the
+  default, `reportWindow` the window a card covers, with `monthKey` and `isMonthKey`. `ReportCard.live` says whether
+  the window reaches now; a window that ended earlier reads no positions and no Hyperliquid figure (`positionsRead`
+  false, `open` empty, `result.hyperliquid` null).
 - `ops`: `scrubPhrases` finds recovery phrases written as lists (numbered, one word per line, commas, pipes, JSON) and in
   all ten BIP-39 word lists, in any case and with or without accents, and never joins words across prose punctuation,
   dates or prices. Words joined only by hyphens, semicolons or underscores, or by spaces in Korean, need a whole phrase
