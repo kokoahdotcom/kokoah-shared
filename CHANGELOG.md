@@ -26,6 +26,12 @@ All notable changes to `@kokoah/shared` are documented here. The format follows
   listed as orders of their own; a cancel or modify that names such a stop without its entry is `STOP_LOSS_REQUIRED`.
 
 ### Added
+- `report` (new entry point): the trading report card, moved from the app unchanged so the backend can compute the
+  same card. `buildReportCard`, the stop-loss check (`liquidatedPositions`, `triggerKind`, `stopsAtLiquidations`),
+  `receiptsOf`, exact money (`units`, `usd`), `mergeGaps`, `inWindow`, `dexOf`, `isPerpCoin`, `isOwnLiquidation`,
+  `openingKnown`, `FEE_FINDINGS`, `WINDOW_MS` and the card's types; its fixed rules (`WINDOW_DAYS`, `MIN_TRIPS`, the
+  findings' thresholds and the read limits). `ReportFill` and `ReportFundingRow` are the app's shapes (the receipts
+  show their rows); `ReportClearinghouse`, `ReportPortfolio` and `ReportOrder` name only what the card reads. No I/O.
 - `policy`: stop coverage. `PolicyContext.requireStopCoverage` (opt-in) with `accountBook` (the traded account's
   positions and resting orders, read by the signer itself): under `requireStopLossForNewEntries`, a cancel or modify (the
   exact wire action) that would leave a position that had a stop-loss without one is `STOP_LOSS_REQUIRED`, and so is

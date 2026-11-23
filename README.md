@@ -369,6 +369,16 @@ in a cache for signers (`find`, `isOwned`, `list`, `invalidate`): 30 s TTL, a re
 old, shared in-flight reads, and `SubAccountLookupError` when HL can't be read (deny, never allow). Also `accountOf`
 and `isAccountAddress`. Subpath export only (`@kokoah/shared/subaccounts`).
 
+### `report`
+The trading report card: one address's last 30 days of perps after fees and funding, with the rows behind every
+figure. `buildReportCard(input)` takes what the caller read (the fills and the times no read covered, the funding,
+`portfolio`, each perp dex's `clearinghouseState`, and after liquidations the orders) and returns the coverage, the
+result after costs with Hyperliquid's own figure, where the money went, taker share, liquidations with the stop-loss
+check (`stopsAtLiquidations`), round trips, habits, losing days and the findings in their fixed order. Money is summed
+exactly in units of 1e-8 (`units`, `usd`); `receiptsOf` lists the rows behind a money figure. The fixed numbers
+(window, samples, thresholds, read limits) are exported too (`rules.ts`). No I/O: the app reads in the browser, and the
+backend gets the same card from the same reads. Subpath export only (`@kokoah/shared/report`).
+
 ---
 
 ## Golden vectors (signing matches the official Python SDK)
