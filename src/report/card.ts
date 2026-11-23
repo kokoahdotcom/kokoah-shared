@@ -180,13 +180,13 @@ export function monthWindow(key: string): ReportWindow {
   return { from: Date.UTC(year, month, 1), to: Date.UTC(year, month + 1, 1) - 1 };
 }
 /**
- * The window a card covers: `window` (default {@link lastDaysWindow}) with its end stopped at `now`. `live`: it reaches
- * `now`, so the positions open now and Hyperliquid's 30-day graph belong to it; a window that ended earlier is a past
- * one, and the card leaves both out.
+ * The window a card covers: `window` (default {@link lastDaysWindow}) with its end stopped at `now`. `live`: it holds
+ * `now`, so the positions open now and Hyperliquid's 30-day graph belong to it; a window that ended earlier, or one
+ * that hasn't started (empty), is not live, and the card leaves both out.
  */
 export function reportWindow(now: number, window?: ReportWindow): ReportWindow & { live: boolean } {
   const w = window ?? lastDaysWindow(now);
-  return { from: w.from, to: Math.min(w.to, now), live: w.to >= now };
+  return { from: w.from, to: Math.min(w.to, now), live: w.from <= now && w.to >= now };
 }
 
 // ------------------------------------------------------------------------------------------------------ types
@@ -578,9 +578,9 @@ export interface ReportRows {
 
 export interface ReportCard {
   /**
-   * The window reaches now (the last 30 days, or a month still under way): the positions open now and Hyperliquid's own
-   * figure are part of the card. False for a window that ended earlier: no positions (`liquidations.positionsRead`
-   * false, `open` empty) and no Hyperliquid figure (`result.hyperliquid` null).
+   * The window holds now (the last 30 days, or a month still under way): the positions open now and Hyperliquid's own
+   * figure are part of the card. False for a window that ended earlier or hasn't started: no positions
+   * (`liquidations.positionsRead` false, `open` empty) and no Hyperliquid figure (`result.hyperliquid` null).
    */
   live: boolean;
   coverage: Coverage;

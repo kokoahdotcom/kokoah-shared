@@ -1741,9 +1741,17 @@ describe("windows", () => {
     expect(before.live).toBe(false);
   });
 
-  it("is empty for a month that hasn't started", () => {
-    const c = card(trip({ at: NOW - DAY }), { window: monthWindow("2026-12") });
+  it("is empty for a month that hasn't started, without the positions open now", () => {
+    const dec = monthWindow("2026-12");
+    expect(reportWindow(NOW, dec)).toMatchObject({ from: dec.from, live: false });
+    const c = card(trip({ at: NOW - DAY }), {
+      window: dec,
+      states: [state(position("ETH", "1", "2000", "1950", "-40"))],
+    });
+    expect(c.live).toBe(false);
     expect(c.coverage.fills).toBe(0);
     expect(c.trips.closed).toBe(0);
+    expect(c.liquidations).toMatchObject({ open: [], positionsRead: false });
+    expect(c.findings.map((f) => f.key)).not.toContain("nearLiquidation");
   });
 });
